@@ -1,0 +1,549 @@
+import 'package:hive/hive.dart';
+
+part 'linux_command.g.dart';
+
+enum CommandDifficulty {
+beginner,
+intermediate,
+advanced,
+expert
+}
+
+enum CommandCategory {
+fileManagement,
+systemAdmin,
+network,
+textProcessing,
+packageManagement,
+security,
+shellScripting,
+processes,
+archiving,
+monitoring
+}
+
+@HiveType(typeId: 5)
+class LinuxCommand extends HiveObject {
+@HiveField(0)
+String id;
+
+@HiveField(1)
+String name;
+
+@HiveField(2)
+String description;
+
+@HiveField(3)
+String detailedDescription;
+
+@HiveField(4)
+String syntax;
+
+@HiveField(5)
+List<String> examples;
+
+@HiveField(6)
+int category; // CommandCategory enum as int
+
+@HiveField(7)
+int difficulty; // CommandDifficulty enum as int
+
+@HiveField(8)
+List<String> tags;
+
+@HiveField(9)
+List<CommandParameter> parameters;
+
+@HiveField(10)
+List<CommandFlag> flags;
+
+@HiveField(11)
+String? manPageUrl;
+
+@HiveField(12)
+List<String> relatedCommands;
+
+@HiveField(13)
+List<CommandExample> interactiveExamples;
+
+@HiveField(14)
+List<String> commonMistakes;
+
+@HiveField(15)
+List<String> tips;
+
+@HiveField(16)
+String? videoUrl;
+
+@HiveField(17)
+int popularityScore; // How often this command is searched/used
+
+@HiveField(18)
+DateTime createdAt;
+
+@HiveField(19)
+DateTime updatedAt;
+
+@HiveField(20)
+bool isInteractive; // Whether command requires user interaction
+
+@HiveField(21)
+bool isSafe; // Whether command is safe to run in simulator
+
+@HiveField(22)
+List<String> prerequisites; // Commands user should know first
+
+@HiveField(23)
+Map<String, dynamic> metadata;
+
+LinuxCommand({
+required this.id,
+required this.name,
+required this.description,
+required this.detailedDescription,
+required this.syntax,
+this.examples = const [],
+required this.category,
+required this.difficulty,
+this.tags = const [],
+this.parameters = const [],
+this.flags = const [],
+this.manPageUrl,
+this.relatedCommands = const [],
+this.interactiveExamples = const [],
+this.commonMistakes = const [],
+this.tips = const [],
+this.videoUrl,
+this.popularityScore = 0,
+required this.createdAt,
+required this.updatedAt,
+this.isInteractive = false,
+this.isSafe = true,
+this.prerequisites = const [],
+this.metadata = const {},
+});
+
+// Getters for enum values
+CommandCategory get commandCategory => CommandCategory.values[category];
+CommandDifficulty get commandDifficulty => CommandDifficulty.values[difficulty];
+
+// Setters for enum values
+set commandCategory(CommandCategory value) => category = value.index;
+set commandDifficulty(CommandDifficulty value) => difficulty = value.index;
+
+// Get category name in Thai
+String get categoryNameTh {
+switch (commandCategory) {
+case CommandCategory.fileManagement:
+return 'การจัดการไฟล์';
+case CommandCategory.systemAdmin:
+return 'การจัดการระบบ';
+case CommandCategory.network:
+return 'เครือข่าย';
+case CommandCategory.textProcessing:
+return 'ประมวลผลข้อความ';
+case CommandCategory.packageManagement:
+return 'จัดการแพ็กเกจ';
+case CommandCategory.security:
+return 'ความปลอดภัย';
+case CommandCategory.shellScripting:
+return 'Shell Scripting';
+case CommandCategory.processes:
+return 'กระบวนการ';
+case CommandCategory.archiving:
+return 'การบีบอัด';
+case CommandCategory.monitoring:
+return 'การติดตาม';
+}
+}
+
+// Get difficulty name in Thai
+String get difficultyNameTh {
+switch (commandDifficulty) {
+case CommandDifficulty.beginner:
+return 'ผู้เริ่มต้น';
+case CommandDifficulty.intermediate:
+return 'ระดับกลาง';
+case CommandDifficulty.advanced:
+return 'ขั้นสูง';
+case CommandDifficulty.expert:
+return 'ผู้เชี่ยวชาญ';
+}
+}
+
+// Get difficulty color
+String get difficultyColor {
+switch (commandDifficulty) {
+case CommandDifficulty.beginner:
+return '#4CAF50'; // Green
+case CommandDifficulty.intermediate:
+return '#FF9800'; // Orange
+case CommandDifficulty.advanced:
+return '#F44336'; // Red
+case CommandDifficulty.expert:
+return '#9C27B0'; // Purple
+}
+}
+
+// Get XP reward based on difficulty
+int get xpReward {
+switch (commandDifficulty) {
+case CommandDifficulty.beginner:
+return 10;
+case CommandDifficulty.intermediate:
+return 25;
+case CommandDifficulty.advanced:
+return 50;
+case CommandDifficulty.expert:
+return 100;
+}
+}
+
+// Check if user meets prerequisites
+bool hasPrerequisites(List<String> userCompletedCommands) {
+return prerequisites.every((prereq) => userCompletedCommands.contains(prereq));
+}
+
+// Get formatted syntax with highlighting
+String get formattedSyntax {
+return syntax.replaceAllMapped(
+RegExp(r'\[([^\]]+)\]'),
+(match) => '[${match.group(1)}]', // Optional parameters
+).replaceAllMapped(
+RegExp(r'<([^>]+)>'),
+(match) => '<${match.group(1)}>', // Required parameters
+);
+}
+
+// Get search score based on query
+double getSearchScore(String query) {
+final lowerQuery = query.toLowerCase();
+double score = 0.0;
+
+// Exact name match
+if (name.toLowerCase() == lowerQuery) score += 100;
+
+// Name contains query
+if (name.toLowerCase().contains(lowerQuery)) score += 50;
+
+// Description contains query
+if (description.toLowerCase().contains(lowerQuery)) score += 30;
+
+// Tags contain query
+for (final tag in tags) {
+if (tag.toLowerCase().contains(lowerQuery)) score += 20;
+}
+
+// Examples contain query
+for (final example in examples) {
+if (example.toLowerCase().contains(lowerQuery)) score += 15;
+}
+
+// Boost score based on popularity
+score += popularityScore * 0.1;
+
+return score;
+}
+
+// Copy with method
+LinuxCommand copyWith({
+String? id,
+String? name,
+String? description,
+String? detailedDescription,
+String? syntax,
+List<String>? examples,
+CommandCategory? category,
+CommandDifficulty? difficulty,
+List<String>? tags,
+List<CommandParameter>? parameters,
+List<CommandFlag>? flags,
+String? manPageUrl,
+List<String>? relatedCommands,
+List<CommandExample>? interactiveExamples,
+List<String>? commonMistakes,
+List<String>? tips,
+String? videoUrl,
+int? popularityScore,
+DateTime? createdAt,
+DateTime? updatedAt,
+bool? isInteractive,
+bool? isSafe,
+List<String>? prerequisites,
+Map<String, dynamic>? metadata,
+}) {
+return LinuxCommand(
+id: id ?? this.id,
+name: name ?? this.name,
+description: description ?? this.description,
+detailedDescription: detailedDescription ?? this.detailedDescription,
+syntax: syntax ?? this.syntax,
+examples: examples ?? List.from(this.examples),
+category: category?.index ?? this.category,
+difficulty: difficulty?.index ?? this.difficulty,
+tags: tags ?? List.from(this.tags),
+parameters: parameters ?? List.from(this.parameters),
+flags: flags ?? List.from(this.flags),
+manPageUrl: manPageUrl ?? this.manPageUrl,
+relatedCommands: relatedCommands ?? List.from(this.relatedCommands),
+interactiveExamples: interactiveExamples ?? List.from(this.interactiveExamples),
+commonMistakes: commonMistakes ?? List.from(this.commonMistakes),
+tips: tips ?? List.from(this.tips),
+videoUrl: videoUrl ?? this.videoUrl,
+popularityScore: popularityScore ?? this.popularityScore,
+createdAt: createdAt ?? this.createdAt,
+updatedAt: updatedAt ?? this.updatedAt,
+isInteractive: isInteractive ?? this.isInteractive,
+isSafe: isSafe ?? this.isSafe,
+prerequisites: prerequisites ?? List.from(this.prerequisites),
+metadata: metadata ?? Map.from(this.metadata),
+);
+}
+
+// Convert to JSON
+Map<String, dynamic> toJson() {
+return {
+'id': id,
+'name': name,
+'description': description,
+'detailedDescription': detailedDescription,
+'syntax': syntax,
+'examples': examples,
+'category': category,
+'difficulty': difficulty,
+'tags': tags,
+'parameters': parameters.map((p) => p.toJson()).toList(),
+'flags': flags.map((f) => f.toJson()).toList(),
+'manPageUrl': manPageUrl,
+'relatedCommands': relatedCommands,
+'interactiveExamples': interactiveExamples.map((e) => e.toJson()).toList(),
+'commonMistakes': commonMistakes,
+'tips': tips,
+'videoUrl': videoUrl,
+'popularityScore': popularityScore,
+'createdAt': createdAt.toIso8601String(),
+'updatedAt': updatedAt.toIso8601String(),
+'isInteractive': isInteractive,
+'isSafe': isSafe,
+'prerequisites': prerequisites,
+'metadata': metadata,
+};
+}
+
+// Create from JSON
+factory LinuxCommand.fromJson(Map<String, dynamic> json) {
+return LinuxCommand(
+id: json['id'] ?? '',
+name: json['name'] ?? '',
+description: json['description'] ?? '',
+detailedDescription: json['detailedDescription'] ?? '',
+syntax: json['syntax'] ?? '',
+examples: List<String>.from(json['examples'] ?? []),
+category: json['category'] ?? 0,
+difficulty: json['difficulty'] ?? 0,
+tags: List<String>.from(json['tags'] ?? []),
+parameters: (json['parameters'] as List<dynamic>?)
+?.map((p) => CommandParameter.fromJson(p))
+.toList() ?? [],
+flags: (json['flags'] as List<dynamic>?)
+?.map((f) => CommandFlag.fromJson(f))
+.toList() ?? [],
+manPageUrl: json['manPageUrl'],
+relatedCommands: List<String>.from(json['relatedCommands'] ?? []),
+interactiveExamples: (json['interactiveExamples'] as List<dynamic>?)
+?.map((e) => CommandExample.fromJson(e))
+.toList() ?? [],
+commonMistakes: List<String>.from(json['commonMistakes'] ?? []),
+tips: List<String>.from(json['tips'] ?? []),
+videoUrl: json['videoUrl'],
+popularityScore: json['popularityScore'] ?? 0,
+createdAt: DateTime.parse(json['createdAt']),
+updatedAt: DateTime.parse(json['updatedAt']),
+isInteractive: json['isInteractive'] ?? false,
+isSafe: json['isSafe'] ?? true,
+prerequisites: List<String>.from(json['prerequisites'] ?? []),
+metadata: Map<String, dynamic>.from(json['metadata'] ?? {}),
+);
+}
+
+@override
+String toString() {
+return 'LinuxCommand(id: $id, name: $name, category: $categoryNameTh, '
+'difficulty: $difficultyNameTh)';
+}
+}
+
+@HiveType(typeId: 6)
+class CommandParameter extends HiveObject {
+@HiveField(0)
+String name;
+
+@HiveField(1)
+String description;
+
+@HiveField(2)
+bool isRequired;
+
+@HiveField(3)
+String? defaultValue;
+
+@HiveField(4)
+String? dataType;
+
+@HiveField(5)
+List<String> examples;
+
+CommandParameter({
+required this.name,
+required this.description,
+this.isRequired = false,
+this.defaultValue,
+this.dataType,
+this.examples = const [],
+});
+
+Map<String, dynamic> toJson() {
+return {
+'name': name,
+'description': description,
+'isRequired': isRequired,
+'defaultValue': defaultValue,
+'dataType': dataType,
+'examples': examples,
+};
+}
+
+factory CommandParameter.fromJson(Map<String, dynamic> json) {
+return CommandParameter(
+name: json['name'] ?? '',
+description: json['description'] ?? '',
+isRequired: json['isRequired'] ?? false,
+defaultValue: json['defaultValue'],
+dataType: json['dataType'],
+examples: List<String>.from(json['examples'] ?? []),
+);
+}
+}
+
+@HiveType(typeId: 7)
+class CommandFlag extends HiveObject {
+@HiveField(0)
+String shortFlag;
+
+@HiveField(1)
+String? longFlag;
+
+@HiveField(2)
+String description;
+
+@HiveField(3)
+bool takesValue;
+
+@HiveField(4)
+String? valueDescription;
+
+@HiveField(5)
+List<String> examples;
+
+CommandFlag({
+required this.shortFlag,
+this.longFlag,
+required this.description,
+this.takesValue = false,
+this.valueDescription,
+this.examples = const [],
+});
+
+String get displayFlag {
+if (longFlag != null) {
+return '$shortFlag, $longFlag';
+}
+return shortFlag;
+}
+
+Map<String, dynamic> toJson() {
+return {
+'shortFlag': shortFlag,
+'longFlag': longFlag,
+'description': description,
+'takesValue': takesValue,
+'valueDescription': valueDescription,
+'examples': examples,
+};
+}
+
+factory CommandFlag.fromJson(Map<String, dynamic> json) {
+return CommandFlag(
+shortFlag: json['shortFlag'] ?? '',
+longFlag: json['longFlag'],
+description: json['description'] ?? '',
+takesValue: json['takesValue'] ?? false,
+valueDescription: json['valueDescription'],
+examples: List<String>.from(json['examples'] ?? []),
+);
+}
+}
+
+@HiveType(typeId: 8)
+class CommandExample extends HiveObject {
+@HiveField(0)
+String title;
+
+@HiveField(1)
+String description;
+
+@HiveField(2)
+String command;
+
+@HiveField(3)
+String expectedOutput;
+
+@HiveField(4)
+String explanation;
+
+@HiveField(5)
+List<String> steps;
+
+@HiveField(6)
+bool isInteractive;
+
+@HiveField(7)
+Map<String, dynamic> metadata;
+
+CommandExample({
+required this.title,
+required this.description,
+required this.command,
+required this.expectedOutput,
+required this.explanation,
+this.steps = const [],
+this.isInteractive = false,
+this.metadata = const {},
+});
+
+Map<String, dynamic> toJson() {
+return {
+'title': title,
+'description': description,
+'command': command,
+'expectedOutput': expectedOutput,
+'explanation': explanation,
+'steps': steps,
+'isInteractive': isInteractive,
+'metadata': metadata,
+};
+}
+
+factory CommandExample.fromJson(Map<String, dynamic> json) {
+return CommandExample(
+title: json['title'] ?? '',
+description: json['description'] ?? '',
+command: json['command'] ?? '',
+expectedOutput: json['expectedOutput'] ?? '',
+explanation: json['explanation'] ?? '',
+steps: List<String>.from(json['steps'] ?? []),
+isInteractive: json['isInteractive'] ?? false,
+metadata: Map<String, dynamic>.from(json['metadata'] ?? {}),
+);
+}
+}
