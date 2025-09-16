@@ -1,490 +1,512 @@
 import 'package:hive/hive.dart';
-import 'package:equatable/equatable.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:json_annotation/json_annotation.dart';
+import '../../domain/entities/progress.dart';
 
 part 'learning_progress.g.dart';
 
-enum ProgressStatus {
-  notStarted,
-  inProgress,
-  completed,
-  review,
-  mastered
-}
-
-enum LearningMode {
-  tutorial,
-  practice,
-  quiz,
-  challenge,
-  freePlay
-}
-
-@HiveType(typeId: 7)
-class LearningProgress extends Equatable {
+@HiveType(typeId: 2)
+@JsonSerializable()
+class LearningProgress extends Progress {
   @HiveField(0)
+  @override
   final String id;
 
   @HiveField(1)
+  @override
   final String userId;
 
   @HiveField(2)
-  final String commandId;
+  @override
+  final String category;
 
   @HiveField(3)
-  final String commandName;
+  @override
+  final int completedLessons;
 
   @HiveField(4)
-  final ProgressStatus status;
+  @override
+  final int totalLessons;
 
   @HiveField(5)
+  @override
   final double progressPercentage;
 
   @HiveField(6)
-  final int attempts;
+  @override
+  final DateTime lastUpdated;
 
   @HiveField(7)
-  final int bestScore;
-
-  @HiveField(8)
-  final int timeSpentSeconds;
-
-  @HiveField(9)
+  @override
   final DateTime startedAt;
 
+  @HiveField(8)
+  @override
+  final int currentStreak;
+
+  @HiveField(9)
+  @override
+  final int longestStreak;
+
   @HiveField(10)
-  final DateTime? completedAt;
+  @override
+  final int totalXP;
 
   @HiveField(11)
-  final DateTime lastAttemptAt;
+  @override
+  final int currentLevel;
 
   @HiveField(12)
-  final DateTime updatedAt;
+  @override
+  final Map<String, dynamic> statistics;
 
   @HiveField(13)
-  final List<LearningSession> sessions;
+  @override
+  final List<String> masteredCommands;
 
   @HiveField(14)
-  final Map<String, int> skillsProgress;
+  @override
+  final List<String> weakCommands;
 
   @HiveField(15)
-  final List<String> hintsUsed;
+  @override
+  final Map<String, int> categoryScores;
 
   @HiveField(16)
-  final List<String> errorsEncountered;
+  @override
+  final DifficultyLevel currentDifficulty;
 
   @HiveField(17)
-  final LearningMode lastLearningMode;
+  @override
+  final DateTime? lastActivityDate;
 
   @HiveField(18)
-  final int streakCount;
+  @override
+  final int totalStudyTimeMinutes;
 
   @HiveField(19)
-  final Map<String, dynamic>? metadata;
-
-  @HiveField(20)
-  final double? difficultyRating;
-
-  @HiveField(21)
-  final String? notes;
+  @override
+  final List<String> completedAchievements;
 
   const LearningProgress({
     required this.id,
     required this.userId,
-    required this.commandId,
-    required this.commandName,
-    required this.status,
+    required this.category,
+    required this.completedLessons,
+    required this.totalLessons,
     required this.progressPercentage,
-    required this.attempts,
-    required this.bestScore,
-    required this.timeSpentSeconds,
+    required this.lastUpdated,
     required this.startedAt,
-    this.completedAt,
-    required this.lastAttemptAt,
-    required this.updatedAt,
-    required this.sessions,
-    required this.skillsProgress,
-    required this.hintsUsed,
-    required this.errorsEncountered,
-    required this.lastLearningMode,
-    required this.streakCount,
-    this.metadata,
-    this.difficultyRating,
-    this.notes,
+    required this.currentStreak,
+    required this.longestStreak,
+    required this.totalXP,
+    required this.currentLevel,
+    required this.statistics,
+    required this.masteredCommands,
+    required this.weakCommands,
+    required this.categoryScores,
+    required this.currentDifficulty,
+    this.lastActivityDate,
+    required this.totalStudyTimeMinutes,
+    required this.completedAchievements,
   });
 
-  // Factory constructor from Map (Firebase)
-  factory LearningProgress.fromMap(Map<String, dynamic> map) {
+  // Factory constructor for new progress
+  factory LearningProgress.createNew({
+    required String userId,
+    required String category,
+    required int totalLessons,
+  }) {
+    final now = DateTime.now();
     return LearningProgress(
-      id: map['id'] ?? '',
-      userId: map['userId'] ?? '',
-      commandId: map['commandId'] ?? '',
-      commandName: map['commandName'] ?? '',
-      status: ProgressStatus.values.firstWhere(
-            (e) => e.toString() == 'ProgressStatus.${map['status']}',
-        orElse: () => ProgressStatus.notStarted,
-      ),
-      progressPercentage: (map['progressPercentage'] ?? 0.0).toDouble(),
-      attempts: map['attempts'] ?? 0,
-      bestScore: map['bestScore'] ?? 0,
-      timeSpentSeconds: map['timeSpentSeconds'] ?? 0,
-      startedAt: (map['startedAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
-      completedAt: (map['completedAt'] as Timestamp?)?.toDate(),
-      lastAttemptAt: (map['lastAttemptAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
-      updatedAt: (map['updatedAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
-      sessions: (map['sessions'] as List?)
-          ?.map((e) => LearningSession.fromMap(Map<String, dynamic>.from(e)))
-          .toList() ?? [],
-      skillsProgress: Map<String, int>.from(map['skillsProgress'] ?? {}),
-      hintsUsed: List<String>.from(map['hintsUsed'] ?? []),
-      errorsEncountered: List<String>.from(map['errorsEncountered'] ?? []),
-      lastLearningMode: LearningMode.values.firstWhere(
-            (e) => e.toString() == 'LearningMode.${map['lastLearningMode']}',
-        orElse: () => LearningMode.tutorial,
-      ),
-      streakCount: map['streakCount'] ?? 0,
-      metadata: map['metadata'] != null
-          ? Map<String, dynamic>.from(map['metadata'])
-          : null,
-      difficultyRating: map['difficultyRating']?.toDouble(),
-      notes: map['notes'],
+      id: 'progress_${userId}_${category}_${now.millisecondsSinceEpoch}',
+      userId: userId,
+      category: category,
+      completedLessons: 0,
+      totalLessons: totalLessons,
+      progressPercentage: 0.0,
+      lastUpdated: now,
+      startedAt: now,
+      currentStreak: 0,
+      longestStreak: 0,
+      totalXP: 0,
+      currentLevel: 1,
+      statistics: {
+        'questionsAnswered': 0,
+        'correctAnswers': 0,
+        'incorrectAnswers': 0,
+        'averageScore': 0.0,
+        'totalQuizzes': 0,
+        'passedQuizzes': 0,
+        'commandsExecuted': 0,
+        'totalSessionTime': 0,
+        'averageSessionTime': 0,
+        'dailyChallengesCompleted': 0,
+        'hintsUsed': 0,
+        'practiceExercisesCompleted': 0,
+        'terminalCommandsExecuted': 0,
+      },
+      masteredCommands: [],
+      weakCommands: [],
+      categoryScores: {
+        'file_management': 0,
+        'system_admin': 0,
+        'network': 0,
+        'text_processing': 0,
+        'package_management': 0,
+        'security': 0,
+        'process_management': 0,
+        'archive': 0,
+      },
+      currentDifficulty: DifficultyLevel.beginner,
+      lastActivityDate: null,
+      totalStudyTimeMinutes: 0,
+      completedAchievements: [],
     );
   }
 
-  // Convert to Map (Firebase)
-  Map<String, dynamic> toMap() {
-    return {
-      'id': id,
-      'userId': userId,
-      'commandId': commandId,
-      'commandName': commandName,
-      'status': status.toString().split('.').last,
-      'progressPercentage': progressPercentage,
-      'attempts': attempts,
-      'bestScore': bestScore,
-      'timeSpentSeconds': timeSpentSeconds,
-      'startedAt': Timestamp.fromDate(startedAt),
-      'completedAt': completedAt != null ? Timestamp.fromDate(completedAt!) : null,
-      'lastAttemptAt': Timestamp.fromDate(lastAttemptAt),
-      'updatedAt': Timestamp.fromDate(updatedAt),
-      'sessions': sessions.map((e) => e.toMap()).toList(),
-      'skillsProgress': skillsProgress,
-      'hintsUsed': hintsUsed,
-      'errorsEncountered': errorsEncountered,
-      'lastLearningMode': lastLearningMode.toString().split('.').last,
-      'streakCount': streakCount,
-      'metadata': metadata,
-      'difficultyRating': difficultyRating,
-      'notes': notes,
-    };
+  // JSON serialization
+  factory LearningProgress.fromJson(Map<String, dynamic> json) =>
+      _$LearningProgressFromJson(json);
+
+  Map<String, dynamic> toJson() => _$LearningProgressToJson(this);
+
+  // From domain entity
+  factory LearningProgress.fromEntity(Progress progress) {
+    return LearningProgress(
+      id: progress.id,
+      userId: progress.userId,
+      category: progress.category,
+      completedLessons: progress.completedLessons,
+      totalLessons: progress.totalLessons,
+      progressPercentage: progress.progressPercentage,
+      lastUpdated: progress.lastUpdated,
+      startedAt: progress.startedAt,
+      currentStreak: progress.currentStreak,
+      longestStreak: progress.longestStreak,
+      totalXP: progress.totalXP,
+      currentLevel: progress.currentLevel,
+      statistics: progress.statistics,
+      masteredCommands: progress.masteredCommands,
+      weakCommands: progress.weakCommands,
+      categoryScores: progress.categoryScores,
+      currentDifficulty: progress.currentDifficulty,
+      lastActivityDate: progress.lastActivityDate,
+      totalStudyTimeMinutes: progress.totalStudyTimeMinutes,
+      completedAchievements: progress.completedAchievements,
+    );
   }
 
   // Copy with method
   LearningProgress copyWith({
-    String? id,
-    String? userId,
-    String? commandId,
-    String? commandName,
-    ProgressStatus? status,
+    int? completedLessons,
     double? progressPercentage,
-    int? attempts,
-    int? bestScore,
-    int? timeSpentSeconds,
-    DateTime? startedAt,
-    DateTime? completedAt,
-    DateTime? lastAttemptAt,
-    DateTime? updatedAt,
-    List<LearningSession>? sessions,
-    Map<String, int>? skillsProgress,
-    List<String>? hintsUsed,
-    List<String>? errorsEncountered,
-    LearningMode? lastLearningMode,
-    int? streakCount,
-    Map<String, dynamic>? metadata,
-    double? difficultyRating,
-    String? notes,
+    DateTime? lastUpdated,
+    int? currentStreak,
+    int? longestStreak,
+    int? totalXP,
+    int? currentLevel,
+    Map<String, dynamic>? statistics,
+    List<String>? masteredCommands,
+    List<String>? weakCommands,
+    Map<String, int>? categoryScores,
+    DifficultyLevel? currentDifficulty,
+    DateTime? lastActivityDate,
+    int? totalStudyTimeMinutes,
+    List<String>? completedAchievements,
   }) {
     return LearningProgress(
-      id: id ?? this.id,
-      userId: userId ?? this.userId,
-      commandId: commandId ?? this.commandId,
-      commandName: commandName ?? this.commandName,
-      status: status ?? this.status,
+      id: id,
+      userId: userId,
+      category: category,
+      completedLessons: completedLessons ?? this.completedLessons,
+      totalLessons: totalLessons,
       progressPercentage: progressPercentage ?? this.progressPercentage,
-      attempts: attempts ?? this.attempts,
-      bestScore: bestScore ?? this.bestScore,
-      timeSpentSeconds: timeSpentSeconds ?? this.timeSpentSeconds,
-      startedAt: startedAt ?? this.startedAt,
-      completedAt: completedAt ?? this.completedAt,
-      lastAttemptAt: lastAttemptAt ?? this.lastAttemptAt,
-      updatedAt: updatedAt ?? this.updatedAt,
-      sessions: sessions ?? this.sessions,
-      skillsProgress: skillsProgress ?? this.skillsProgress,
-      hintsUsed: hintsUsed ?? this.hintsUsed,
-      errorsEncountered: errorsEncountered ?? this.errorsEncountered,
-      lastLearningMode: lastLearningMode ?? this.lastLearningMode,
-      streakCount: streakCount ?? this.streakCount,
-      metadata: metadata ?? this.metadata,
-      difficultyRating: difficultyRating ?? this.difficultyRating,
-      notes: notes ?? this.notes,
+      lastUpdated: lastUpdated ?? this.lastUpdated,
+      startedAt: startedAt,
+      currentStreak: currentStreak ?? this.currentStreak,
+      longestStreak: longestStreak ?? this.longestStreak,
+      totalXP: totalXP ?? this.totalXP,
+      currentLevel: currentLevel ?? this.currentLevel,
+      statistics: statistics ?? Map.from(this.statistics),
+      masteredCommands: masteredCommands ?? List.from(this.masteredCommands),
+      weakCommands: weakCommands ?? List.from(this.weakCommands),
+      categoryScores: categoryScores ?? Map.from(this.categoryScores),
+      currentDifficulty: currentDifficulty ?? this.currentDifficulty,
+      lastActivityDate: lastActivityDate ?? this.lastActivityDate,
+      totalStudyTimeMinutes: totalStudyTimeMinutes ?? this.totalStudyTimeMinutes,
+      completedAchievements: completedAchievements ?? List.from(this.completedAchievements),
     );
   }
 
   // Helper methods
-  String get statusDisplayText {
-    switch (status) {
-      case ProgressStatus.notStarted:
-        return 'ยังไม่เริ่ม';
-      case ProgressStatus.inProgress:
-        return 'กำลังเรียน';
-      case ProgressStatus.completed:
-        return 'เสร็จสิ้น';
-      case ProgressStatus.review:
-        return 'ทบทวน';
-      case ProgressStatus.mastered:
-        return 'เชี่ยวชาญ';
+  bool get isCompleted => progressPercentage >= 100.0;
+  bool get hasStarted => completedLessons > 0;
+
+  double get completionRate => totalLessons > 0 ? (completedLessons / totalLessons) * 100 : 0.0;
+
+  int get remainingLessons => totalLessons - completedLessons;
+
+  bool get hasActiveStreak => currentStreak > 0 && lastActivityDate != null &&
+      DateTime.now().difference(lastActivityDate!).inDays <= 1;
+
+  double get accuracy {
+    final questionsAnswered = statistics['questionsAnswered'] as int? ?? 0;
+    final correctAnswers = statistics['correctAnswers'] as int? ?? 0;
+
+    if (questionsAnswered == 0) return 0.0;
+    return (correctAnswers / questionsAnswered) * 100;
+  }
+
+  double get quizPassRate {
+    final totalQuizzes = statistics['totalQuizzes'] as int? ?? 0;
+    final passedQuizzes = statistics['passedQuizzes'] as int? ?? 0;
+
+    if (totalQuizzes == 0) return 0.0;
+    return (passedQuizzes / totalQuizzes) * 100;
+  }
+
+  Duration get averageSessionTime {
+    final avgMinutes = statistics['averageSessionTime'] as int? ?? 0;
+    return Duration(minutes: avgMinutes);
+  }
+
+  Duration get totalStudyTime => Duration(minutes: totalStudyTimeMinutes);
+
+  String get difficultyDisplayName {
+    switch (currentDifficulty) {
+      case DifficultyLevel.beginner:
+        return 'เริ่มต้น';
+      case DifficultyLevel.intermediate:
+        return 'กลาง';
+      case DifficultyLevel.advanced:
+        return 'ขั้นสูง';
+      case DifficultyLevel.expert:
+        return 'ผู้เชี่ยวชาญ';
+      default:
+        return 'ไม่ระบุ';
     }
   }
 
-  String get learningModeDisplayText {
-    switch (lastLearningMode) {
-      case LearningMode.tutorial:
-        return 'บทเรียน';
-      case LearningMode.practice:
-        return 'ฝึกฝน';
-      case LearningMode.quiz:
-        return 'แบบทดสอบ';
-      case LearningMode.challenge:
-        return 'ความท้าทาย';
-      case LearningMode.freePlay:
-        return 'เล่นอิสระ';
-    }
+  String get categoryDisplayName {
+    const categories = {
+      'file_management': 'การจัดการไฟล์',
+      'system_admin': 'การจัดการระบบ',
+      'network': 'เครือข่าย',
+      'text_processing': 'การประมวลผลข้อความ',
+      'package_management': 'การจัดการแพ็กเกจ',
+      'security': 'ความปลอดภัย',
+      'process_management': 'การจัดการโปรเซส',
+      'archive': 'การจัดการไฟล์บีบอัด',
+    };
+    return categories[category] ?? category;
   }
 
-  bool get isCompleted => status == ProgressStatus.completed || status == ProgressStatus.mastered;
-  bool get isInProgress => status == ProgressStatus.inProgress;
-  bool get needsReview => status == ProgressStatus.review;
-  bool get isMastered => status == ProgressStatus.mastered;
+  // Performance analysis
+  Map<String, dynamic> getPerformanceAnalysis() {
+    return {
+      'overallScore': accuracy,
+      'strengths': _getStrongestCategories(),
+      'weaknesses': _getWeakestCategories(),
+      'improvements': _getSuggestedImprovements(),
+      'nextLevel': _getNextLevelInfo(),
+      'studyPattern': _getStudyPatternAnalysis(),
+    };
+  }
 
-  Duration get timeSpent => Duration(seconds: timeSpentSeconds);
-  String get formattedTimeSpent {
-    final duration = timeSpent;
-    if (duration.inHours > 0) {
-      return '${duration.inHours} ชม. ${duration.inMinutes % 60} น.';
+  List<String> _getStrongestCategories() {
+    return categoryScores.entries
+        .where((entry) => entry.value >= 80)
+        .map((entry) => entry.key)
+        .toList()
+      ..sort((a, b) => categoryScores[b]!.compareTo(categoryScores[a]!));
+  }
+
+  List<String> _getWeakestCategories() {
+    return categoryScores.entries
+        .where((entry) => entry.value < 60)
+        .map((entry) => entry.key)
+        .toList()
+      ..sort((a, b) => categoryScores[a]!.compareTo(categoryScores[b]!));
+  }
+
+  List<String> _getSuggestedImprovements() {
+    final suggestions = <String>[];
+
+    if (accuracy < 70) {
+      suggestions.add('ฝึกฝนการตอบคำถามให้มากขึ้น');
+    }
+
+    if (currentStreak < 3) {
+      suggestions.add('พยายามเรียนรู้อย่างต่อเนื่องทุกวัน');
+    }
+
+    if (weakCommands.length > masteredCommands.length) {
+      suggestions.add('ทบทวนคำสั่งที่ยังไม่เชี่ยวชาญ');
+    }
+
+    if (quizPassRate < 75) {
+      suggestions.add('ฝึกทำแบบทดสอบให้มากขึ้น');
+    }
+
+    return suggestions;
+  }
+
+  Map<String, dynamic> _getNextLevelInfo() {
+    const levelRequirements = {
+      1: 100, 2: 250, 3: 500, 4: 1000, 5: 1750,
+      6: 2750, 7: 4000, 8: 5500, 9: 7250, 10: 10000,
+    };
+
+    final nextLevel = currentLevel + 1;
+    final requiredXP = levelRequirements[nextLevel] ?? 0;
+    final remainingXP = requiredXP - totalXP;
+
+    return {
+      'nextLevel': nextLevel,
+      'requiredXP': requiredXP,
+      'remainingXP': remainingXP > 0 ? remainingXP : 0,
+      'progressToNext': requiredXP > 0 ? (totalXP / requiredXP) * 100 : 100,
+    };
+  }
+
+  Map<String, dynamic> _getStudyPatternAnalysis() {
+    final totalSessions = statistics['totalQuizzes'] as int? ?? 0;
+    final avgSessionTime = statistics['averageSessionTime'] as int? ?? 0;
+
+    String pattern = 'ไม่มีข้อมูลเพียงพอ';
+    if (totalSessions > 0) {
+      if (avgSessionTime < 15) {
+        pattern = 'เรียนรู้แบบสั้นๆ แต่บ่อย';
+      } else if (avgSessionTime > 45) {
+        pattern = 'เรียนรู้แบบยาวๆ ในแต่ละครั้ง';
+      } else {
+        pattern = 'เรียนรู้แบบปกติ';
+      }
+    }
+
+    return {
+      'pattern': pattern,
+      'consistency': hasActiveStreak ? 'สม่ำเสมอ' : 'ไม่สม่ำเสมอ',
+      'intensity': _getStudyIntensity(),
+      'efficiency': _getStudyEfficiency(),
+    };
+  }
+
+  String _getStudyIntensity() {
+    final sessionsPerWeek = totalStudyTimeMinutes / 7 / 60; // hours per week
+
+    if (sessionsPerWeek < 1) return 'น้อย';
+    if (sessionsPerWeek < 3) return 'ปกติ';
+    if (sessionsPerWeek < 6) return 'มาก';
+    return 'มากมาย';
+  }
+
+  String _getStudyEfficiency() {
+    final efficiency = accuracy * (quizPassRate / 100);
+
+    if (efficiency < 40) return 'ต่ำ';
+    if (efficiency < 60) return 'ปกติ';
+    if (efficiency < 80) return 'ดี';
+    return 'ยอดเยี่ยม';
+  }
+
+  // Update methods
+  LearningProgress completeLesson() {
+    final newCompleted = completedLessons + 1;
+    final newProgress = (newCompleted / totalLessons) * 100;
+
+    return copyWith(
+      completedLessons: newCompleted,
+      progressPercentage: newProgress.clamp(0.0, 100.0),
+      lastUpdated: DateTime.now(),
+      lastActivityDate: DateTime.now(),
+    );
+  }
+
+  LearningProgress addXP(int xp) {
+    final newXP = totalXP + xp;
+    final newLevel = _calculateLevel(newXP);
+
+    return copyWith(
+      totalXP: newXP,
+      currentLevel: newLevel,
+      lastUpdated: DateTime.now(),
+      lastActivityDate: DateTime.now(),
+    );
+  }
+
+  int _calculateLevel(int xp) {
+    const levelRequirements = {
+      1: 0, 2: 100, 3: 250, 4: 500, 5: 1000,
+      6: 1750, 7: 2750, 8: 4000, 9: 5500, 10: 7250,
+    };
+
+    for (int level = 10; level >= 1; level--) {
+      if (xp >= (levelRequirements[level] ?? 0)) {
+        return level;
+      }
+    }
+    return 1;
+  }
+
+  LearningProgress updateStreak() {
+    final now = DateTime.now();
+    final yesterday = now.subtract(Duration(days: 1));
+
+    int newStreak = currentStreak;
+
+    if (lastActivityDate == null) {
+      newStreak = 1;
     } else {
-      return '${duration.inMinutes} นาที';
+      final daysSinceLastActivity = now.difference(lastActivityDate!).inDays;
+
+      if (daysSinceLastActivity == 1) {
+        // Consecutive day
+        newStreak = currentStreak + 1;
+      } else if (daysSinceLastActivity > 1) {
+        // Streak broken
+        newStreak = 1;
+      }
+      // If same day, keep current streak
     }
-  }
 
-  double get averageScore {
-    if (sessions.isEmpty) return 0.0;
-    final total = sessions.fold(0, (sum, session) => sum + session.score);
-    return total / sessions.length;
-  }
+    final newLongestStreak = newStreak > longestStreak ? newStreak : longestStreak;
 
-  int get totalSessions => sessions.length;
-  int get successfulSessions => sessions.where((s) => s.isSuccessful).length;
-  double get successRate => totalSessions > 0 ? successfulSessions / totalSessions : 0.0;
-
-  bool get hasRecentActivity {
-    final daysSinceLastAttempt = DateTime.now().difference(lastAttemptAt).inDays;
-    return daysSinceLastAttempt <= 7;
-  }
-
-  @override
-  List<Object?> get props => [
-    id,
-    userId,
-    commandId,
-    commandName,
-    status,
-    progressPercentage,
-    attempts,
-    bestScore,
-    timeSpentSeconds,
-    startedAt,
-    completedAt,
-    lastAttemptAt,
-    updatedAt,
-    sessions,
-    skillsProgress,
-    hintsUsed,
-    errorsEncountered,
-    lastLearningMode,
-    streakCount,
-    metadata,
-    difficultyRating,
-    notes,
-  ];
-}
-
-@HiveType(typeId: 8)
-class LearningSession extends Equatable {
-  @HiveField(0)
-  final String id;
-
-  @HiveField(1)
-  final DateTime startTime;
-
-  @HiveField(2)
-  final DateTime endTime;
-
-  @HiveField(3)
-  final LearningMode mode;
-
-  @HiveField(4)
-  final int score;
-
-  @HiveField(5)
-  final int maxScore;
-
-  @HiveField(6)
-  final bool isSuccessful;
-
-  @HiveField(7)
-  final List<String> hintsUsed;
-
-  @HiveField(8)
-  final List<SessionError> errors;
-
-  @HiveField(9)
-  final Map<String, dynamic>? sessionData;
-
-  @HiveField(10)
-  final String? feedback;
-
-  const LearningSession({
-    required this.id,
-    required this.startTime,
-    required this.endTime,
-    required this.mode,
-    required this.score,
-    required this.maxScore,
-    required this.isSuccessful,
-    required this.hintsUsed,
-    required this.errors,
-    this.sessionData,
-    this.feedback,
-  });
-
-  factory LearningSession.fromMap(Map<String, dynamic> map) {
-    return LearningSession(
-      id: map['id'] ?? '',
-      startTime: (map['startTime'] as Timestamp?)?.toDate() ?? DateTime.now(),
-      endTime: (map['endTime'] as Timestamp?)?.toDate() ?? DateTime.now(),
-      mode: LearningMode.values.firstWhere(
-            (e) => e.toString() == 'LearningMode.${map['mode']}',
-        orElse: () => LearningMode.tutorial,
-      ),
-      score: map['score'] ?? 0,
-      maxScore: map['maxScore'] ?? 100,
-      isSuccessful: map['isSuccessful'] ?? false,
-      hintsUsed: List<String>.from(map['hintsUsed'] ?? []),
-      errors: (map['errors'] as List?)
-          ?.map((e) => SessionError.fromMap(Map<String, dynamic>.from(e)))
-          .toList() ?? [],
-      sessionData: map['sessionData'] != null
-          ? Map<String, dynamic>.from(map['sessionData'])
-          : null,
-      feedback: map['feedback'],
+    return copyWith(
+      currentStreak: newStreak,
+      longestStreak: newLongestStreak,
+      lastActivityDate: now,
+      lastUpdated: now,
     );
   }
 
-  Map<String, dynamic> toMap() {
-    return {
-      'id': id,
-      'startTime': Timestamp.fromDate(startTime),
-      'endTime': Timestamp.fromDate(endTime),
-      'mode': mode.toString().split('.').last,
-      'score': score,
-      'maxScore': maxScore,
-      'isSuccessful': isSuccessful,
-      'hintsUsed': hintsUsed,
-      'errors': errors.map((e) => e.toMap()).toList(),
-      'sessionData': sessionData,
-      'feedback': feedback,
-    };
+  @override
+  String toString() {
+    return 'LearningProgress(id: $id, category: $category, progress: ${progressPercentage.toStringAsFixed(1)}%, level: $currentLevel)';
   }
 
-  Duration get duration => endTime.difference(startTime);
-  double get scorePercentage => maxScore > 0 ? (score / maxScore) * 100 : 0.0;
-  int get errorCount => errors.length;
-  int get hintCount => hintsUsed.length;
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is LearningProgress && other.id == id;
+  }
 
   @override
-  List<Object?> get props => [
-    id,
-    startTime,
-    endTime,
-    mode,
-    score,
-    maxScore,
-    isSuccessful,
-    hintsUsed,
-    errors,
-    sessionData,
-    feedback,
-  ];
+  int get hashCode => id.hashCode;
 }
 
-@HiveType(typeId: 9)
-class SessionError extends Equatable {
+// Hive Adapter for DifficultyLevel enum
+@HiveType(typeId: 5)
+enum DifficultyLevel {
   @HiveField(0)
-  final String errorType;
+  beginner,
 
   @HiveField(1)
-  final String errorMessage;
+  intermediate,
 
   @HiveField(2)
-  final DateTime timestamp;
+  advanced,
 
   @HiveField(3)
-  final String? userInput;
-
-  @HiveField(4)
-  final String? expectedInput;
-
-  @HiveField(5)
-  final String? suggestion;
-
-  const SessionError({
-    required this.errorType,
-    required this.errorMessage,
-    required this.timestamp,
-    this.userInput,
-    this.expectedInput,
-    this.suggestion,
-  });
-
-  factory SessionError.fromMap(Map<String, dynamic> map) {
-    return SessionError(
-      errorType: map['errorType'] ?? '',
-      errorMessage: map['errorMessage'] ?? '',
-      timestamp: (map['timestamp'] as Timestamp?)?.toDate() ?? DateTime.now(),
-      userInput: map['userInput'],
-      expectedInput: map['expectedInput'],
-      suggestion: map['suggestion'],
-    );
-  }
-
-  Map<String, dynamic> toMap() {
-    return {
-      'errorType': errorType,
-      'errorMessage': errorMessage,
-      'timestamp': Timestamp.fromDate(timestamp),
-      'userInput': userInput,
-      'expectedInput': expectedInput,
-      'suggestion': suggestion,
-    };
-  }
-
-  @override
-  List<Object?> get props => [
-    errorType,
-    errorMessage,
-    timestamp,
-    userInput,
-    expectedInput,
-    suggestion,
-  ];
+  expert,
 }

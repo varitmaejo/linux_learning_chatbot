@@ -1,460 +1,415 @@
-import 'package:hive/hive.dart';
-import 'package:equatable/equatable.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:json_annotation/json_annotation.dart';
+import '../../domain/entities/command.dart';
 
 part 'linux_command.g.dart';
 
-enum CommandDifficulty {
-  beginner,
-  intermediate,
-  advanced,
-  expert
-}
-
-enum CommandCategory {
-  fileSystem,
-  textProcessing,
-  systemInfo,
-  network,
-  process,
-  permission,
-  archive,
-  search,
-  ioRedirection,
-  environment
-}
-
-@HiveType(typeId: 4)
-class LinuxCommand extends Equatable {
-  @HiveField(0)
+@JsonSerializable()
+class LinuxCommand extends Command {
+  @override
   final String id;
 
-  @HiveField(1)
+  @override
   final String name;
 
-  @HiveField(2)
+  @override
   final String description;
 
-  @HiveField(3)
-  final String syntax;
+  @override
+  final String usage;
 
-  @HiveField(4)
-  final CommandDifficulty difficulty;
+  @override
+  final String category;
 
-  @HiveField(5)
-  final CommandCategory category;
+  @override
+  final String difficulty;
 
-  @HiveField(6)
-  final List<CommandExample> examples;
-
-  @HiveField(7)
-  final List<CommandParameter> parameters;
-
-  @HiveField(8)
-  final List<String> relatedCommands;
-
-  @HiveField(9)
+  @override
   final List<String> tags;
 
-  @HiveField(10)
-  final String? manualUrl;
+  @override
+  final List<String> examples;
 
-  @HiveField(11)
-  final String? videoUrl;
+  @override
+  final List<String> relatedCommands;
 
-  @HiveField(12)
-  final int usageCount;
+  @override
+  final Map<String, dynamic> metadata;
 
-  @HiveField(13)
-  final double averageRating;
-
-  @HiveField(14)
+  @override
   final DateTime createdAt;
 
-  @HiveField(15)
+  @override
   final DateTime updatedAt;
 
-  @HiveField(16)
-  final List<String>? prerequisites;
-
-  @HiveField(17)
-  final String? warningMessage;
-
-  @HiveField(18)
-  final bool isDestructive;
-
-  @HiveField(19)
-  final Map<String, dynamic>? metadata;
+  // Additional Linux-specific properties
+  final String? manPage;
+  final List<String> options;
+  final List<String> parameters;
+  final String? syntax;
+  final List<Map<String, String>> commonUseCases;
+  final List<String> warnings;
+  final String? shortDescription;
+  final bool requiresRoot;
+  final List<String> supportedShells;
 
   const LinuxCommand({
     required this.id,
     required this.name,
     required this.description,
-    required this.syntax,
-    required this.difficulty,
+    required this.usage,
     required this.category,
-    required this.examples,
-    required this.parameters,
-    required this.relatedCommands,
+    required this.difficulty,
     required this.tags,
-    this.manualUrl,
-    this.videoUrl,
-    this.usageCount = 0,
-    this.averageRating = 0.0,
+    required this.examples,
+    required this.relatedCommands,
+    required this.metadata,
     required this.createdAt,
     required this.updatedAt,
-    this.prerequisites,
-    this.warningMessage,
-    this.isDestructive = false,
-    this.metadata,
+    this.manPage,
+    required this.options,
+    required this.parameters,
+    this.syntax,
+    required this.commonUseCases,
+    required this.warnings,
+    this.shortDescription,
+    required this.requiresRoot,
+    required this.supportedShells,
   });
 
-  // Factory constructor from Map (Firebase)
-  factory LinuxCommand.fromMap(Map<String, dynamic> map) {
+  // JSON serialization
+  factory LinuxCommand.fromJson(Map<String, dynamic> json) =>
+      _$LinuxCommandFromJson(json);
+
+  Map<String, dynamic> toJson() => _$LinuxCommandToJson(this);
+
+  // From domain entity
+  factory LinuxCommand.fromEntity(Command command) {
     return LinuxCommand(
-      id: map['id'] ?? '',
-      name: map['name'] ?? '',
-      description: map['description'] ?? '',
-      syntax: map['syntax'] ?? '',
-      difficulty: CommandDifficulty.values.firstWhere(
-            (e) => e.toString() == 'CommandDifficulty.${map['difficulty']}',
-        orElse: () => CommandDifficulty.beginner,
-      ),
-      category: CommandCategory.values.firstWhere(
-            (e) => e.toString() == 'CommandCategory.${map['category']}',
-        orElse: () => CommandCategory.fileSystem,
-      ),
-      examples: (map['examples'] as List?)
-          ?.map((e) => CommandExample.fromMap(Map<String, dynamic>.from(e)))
+      id: command.id,
+      name: command.name,
+      description: command.description,
+      usage: command.usage,
+      category: command.category,
+      difficulty: command.difficulty,
+      tags: command.tags,
+      examples: command.examples,
+      relatedCommands: command.relatedCommands,
+      metadata: command.metadata,
+      createdAt: command.createdAt,
+      updatedAt: command.updatedAt,
+      manPage: command.metadata['manPage'] as String?,
+      options: (command.metadata['options'] as List?)?.cast<String>() ?? [],
+      parameters: (command.metadata['parameters'] as List?)?.cast<String>() ?? [],
+      syntax: command.metadata['syntax'] as String?,
+      commonUseCases: (command.metadata['commonUseCases'] as List?)
+          ?.cast<Map<String, dynamic>>()
+          .map((case) => case.cast<String, String>())
           .toList() ?? [],
-      parameters: (map['parameters'] as List?)
-          ?.map((e) => CommandParameter.fromMap(Map<String, dynamic>.from(e)))
-          .toList() ?? [],
-      relatedCommands: List<String>.from(map['relatedCommands'] ?? []),
-      tags: List<String>.from(map['tags'] ?? []),
-      manualUrl: map['manualUrl'],
-      videoUrl: map['videoUrl'],
-      usageCount: map['usageCount'] ?? 0,
-      averageRating: (map['averageRating'] ?? 0.0).toDouble(),
-      createdAt: (map['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
-      updatedAt: (map['updatedAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
-      prerequisites: map['prerequisites'] != null
-          ? List<String>.from(map['prerequisites'])
-          : null,
-      warningMessage: map['warningMessage'],
-      isDestructive: map['isDestructive'] ?? false,
-      metadata: map['metadata'] != null
-          ? Map<String, dynamic>.from(map['metadata'])
-          : null,
+      warnings: (command.metadata['warnings'] as List?)?.cast<String>() ?? [],
+      shortDescription: command.metadata['shortDescription'] as String?,
+      requiresRoot: command.metadata['requiresRoot'] as bool? ?? false,
+      supportedShells: (command.metadata['supportedShells'] as List?)?.cast<String>() ?? ['bash'],
     );
   }
 
-  // Convert to Map (Firebase)
-  Map<String, dynamic> toMap() {
-    return {
-      'id': id,
-      'name': name,
-      'description': description,
-      'syntax': syntax,
-      'difficulty': difficulty.toString().split('.').last,
-      'category': category.toString().split('.').last,
-      'examples': examples.map((e) => e.toMap()).toList(),
-      'parameters': parameters.map((e) => e.toMap()).toList(),
-      'relatedCommands': relatedCommands,
-      'tags': tags,
-      'manualUrl': manualUrl,
-      'videoUrl': videoUrl,
-      'usageCount': usageCount,
-      'averageRating': averageRating,
-      'createdAt': Timestamp.fromDate(createdAt),
-      'updatedAt': Timestamp.fromDate(updatedAt),
-      'prerequisites': prerequisites,
-      'warningMessage': warningMessage,
-      'isDestructive': isDestructive,
-      'metadata': metadata,
-    };
+  // Factory constructors for common Linux commands
+  factory LinuxCommand.ls() {
+    return LinuxCommand(
+      id: 'cmd_ls',
+      name: 'ls',
+      description: 'แสดงรายการไฟล์และโฟลเดอร์ในไดเรกทอรี',
+      shortDescription: 'แสดงรายการไฟล์',
+      usage: 'ls [options] [directory]',
+      syntax: 'ls [-alFd] [path]',
+      category: 'file_management',
+      difficulty: 'beginner',
+      tags: ['file', 'directory', 'list', 'basic', 'essential'],
+      examples: [
+        'ls',
+        'ls -l',
+        'ls -la',
+        'ls -lh /home',
+        'ls *.txt',
+      ],
+      options: [
+        '-l: แสดงรายละเอียดแบบยาว',
+        '-a: แสดงไฟล์ที่ซ่อนด้วย',
+        '-h: แสดงขนาดไฟล์ในรูปแบบที่อ่านง่าย',
+        '-t: เรียงตามเวลาแก้ไข',
+        '-r: เรียงแบบย้อนกลับ',
+      ],
+      parameters: ['directory: ไดเรกทอรีที่ต้องการแสดง (ไม่บังคับ)'],
+      relatedCommands: ['dir', 'find', 'tree', 'stat'],
+      commonUseCases: [
+        {'case': 'แสดงไฟล์ทั้งหมดรวมทั้งที่ซ่อน', 'command': 'ls -la'},
+        {'case': 'แสดงขนาดไฟล์ในรูปแบบที่อ่านง่าย', 'command': 'ls -lh'},
+        {'case': 'เรียงไฟล์ตามเวลาแก้ไข', 'command': 'ls -lt'},
+      ],
+      warnings: [],
+      requiresRoot: false,
+      supportedShells: ['bash', 'zsh', 'sh', 'fish'],
+      metadata: {
+        'popularityScore': 95,
+        'learningPriority': 1,
+        'manPageUrl': 'https://man7.org/linux/man-pages/man1/ls.1.html',
+        'tutorialLevel': 'basic',
+        'estimatedLearningTime': 15, // minutes
+      },
+      createdAt: DateTime(2023, 1, 1),
+      updatedAt: DateTime.now(),
+    );
+  }
+
+  factory LinuxCommand.cd() {
+    return LinuxCommand(
+      id: 'cmd_cd',
+      name: 'cd',
+      description: 'เปลี่ยนไดเรกทอรีปัจจุบัน (Change Directory)',
+      shortDescription: 'เปลี่ยนไดเรกทอรี',
+      usage: 'cd [directory]',
+      syntax: 'cd [path]',
+      category: 'file_management',
+      difficulty: 'beginner',
+      tags: ['directory', 'navigation', 'basic', 'essential'],
+      examples: [
+        'cd',
+        'cd ~',
+        'cd ..',
+        'cd /home/user',
+        'cd Documents',
+        'cd -',
+      ],
+      options: [],
+      parameters: ['directory: ไดเรกทอรีปลายทางที่ต้องการไป (ไม่บังคับ)'],
+      relatedCommands: ['pwd', 'ls', 'mkdir', 'rmdir'],
+      commonUseCases: [
+        {'case': 'กลับไป home directory', 'command': 'cd ~'},
+        {'case': 'ย้อนกลับไปไดเรกทอรีก่อนหน้า', 'command': 'cd ..'},
+        {'case': 'กลับไปไดเรกทอรีที่เพิ่งอยู่', 'command': 'cd -'},
+      ],
+      warnings: [],
+      requiresRoot: false,
+      supportedShells: ['bash', 'zsh', 'sh', 'fish'],
+      metadata: {
+        'popularityScore': 98,
+        'learningPriority': 1,
+        'builtin': true,
+        'tutorialLevel': 'basic',
+        'estimatedLearningTime': 10,
+      },
+      createdAt: DateTime(2023, 1, 1),
+      updatedAt: DateTime.now(),
+    );
+  }
+
+  factory LinuxCommand.grep() {
+    return LinuxCommand(
+      id: 'cmd_grep',
+      name: 'grep',
+      description: 'ค้นหาข้อความในไฟล์โดยใช้ regular expression',
+      shortDescription: 'ค้นหาข้อความ',
+      usage: 'grep [options] pattern [file...]',
+      syntax: 'grep [-inrvE] "pattern" file',
+      category: 'text_processing',
+      difficulty: 'intermediate',
+      tags: ['search', 'text', 'regex', 'filter', 'important'],
+      examples: [
+        'grep "hello" file.txt',
+        'grep -i "error" log.txt',
+        'grep -r "TODO" .',
+        'grep -n "function" *.js',
+        'ps aux | grep apache',
+      ],
+      options: [
+        '-i: ไม่สนใจตัวพิมพ์เล็กใหญ่',
+        '-n: แสดงหมายเลขบรรทัด',
+        '-r: ค้นหาแบบ recursive',
+        '-v: แสดงบรรทัดที่ไม่ตรงกับ pattern',
+        '-E: ใช้ extended regex',
+        '-l: แสดงเฉพาะชื่อไฟล์ที่พบ',
+        '-c: นับจำนวนบรรทัดที่พบ',
+      ],
+      parameters: [
+        'pattern: รูปแบบข้อความที่ต้องการค้นหา',
+        'file: ไฟล์ที่ต้องการค้นหา (ไม่บังคับ)',
+      ],
+      relatedCommands: ['egrep', 'fgrep', 'sed', 'awk', 'find'],
+      commonUseCases: [
+        {'case': 'ค้นหาข้อความไม่สนใจตัวพิมพ์', 'command': 'grep -i "error" log.txt'},
+        {'case': 'ค้นหาในทุกไฟล์ในโฟลเดอร์', 'command': 'grep -r "TODO" .'},
+        {'case': 'ค้นหาพร้อมแสดงหมายเลขบรรทัด', 'command': 'grep -n "function" *.js'},
+      ],
+      warnings: [
+        'ระวังการใช้ regex ที่ซับซ้อนเกินไปอาจทำให้ช้า',
+        'ใช้ quotes เพื่อป้องกัน shell interpretation',
+      ],
+      requiresRoot: false,
+      supportedShells: ['bash', 'zsh', 'sh', 'fish'],
+      metadata: {
+        'popularityScore': 85,
+        'learningPriority': 3,
+        'complexityLevel': 'medium',
+        'tutorialLevel': 'intermediate',
+        'estimatedLearningTime': 30,
+        'regexSupport': true,
+      },
+      createdAt: DateTime(2023, 1, 1),
+      updatedAt: DateTime.now(),
+    );
+  }
+
+  factory LinuxCommand.sudo() {
+    return LinuxCommand(
+      id: 'cmd_sudo',
+      name: 'sudo',
+      description: 'รันคำสั่งด้วยสิทธิ์ของผู้ใช้อื่น (มักจะเป็น root)',
+      shortDescription: 'รันคำสั่งด้วยสิทธิ์สูงสุด',
+      usage: 'sudo [options] command',
+      syntax: 'sudo [-u user] command',
+      category: 'system_admin',
+      difficulty: 'intermediate',
+      tags: ['admin', 'privilege', 'security', 'root', 'important'],
+      examples: [
+        'sudo apt update',
+        'sudo mkdir /etc/myconfig',
+        'sudo -u www-data ls /var/www',
+        'sudo !!',
+        'sudo -s',
+      ],
+      options: [
+        '-u: ระบุผู้ใช้ที่ต้องการรันคำสั่ง',
+        '-s: เปิด shell ด้วยสิทธิ์ root',
+        '-i: เปิด login shell',
+        '-l: แสดงคำสั่งที่อนุญาตให้รัน',
+        '-v: ขยายเวลา credential cache',
+      ],
+      parameters: [
+        'user: ชื่อผู้ใช้ที่ต้องการสวมสิทธิ์ (default: root)',
+        'command: คำสั่งที่ต้องการรัน',
+      ],
+      relatedCommands: ['su', 'visudo', 'whoami', 'id'],
+      commonUseCases: [
+        {'case': 'รันคำสั่งก่อนหน้าด้วย sudo', 'command': 'sudo !!'},
+        {'case': 'เปิด root shell', 'command': 'sudo -s'},
+        {'case': 'รันคำสั่งในฐานะผู้ใช้อื่น', 'command': 'sudo -u username command'},
+      ],
+      warnings: [
+        'ระวังการใช้ sudo อาจเป็นอันตรายต่อระบบ',
+        'อย่าแชร์รหัสผ่าน sudo กับใคร',
+        'ตรวจสอบคำสั่งให้ดีก่อนรัน',
+      ],
+      requiresRoot: false,
+      supportedShells: ['bash', 'zsh', 'sh', 'fish'],
+      metadata: {
+        'popularityScore': 90,
+        'learningPriority': 4,
+        'securitySensitive': true,
+        'tutorialLevel': 'intermediate',
+        'estimatedLearningTime': 25,
+        'requiresConfiguration': true,
+      },
+      createdAt: DateTime(2023, 1, 1),
+      updatedAt: DateTime.now(),
+    );
   }
 
   // Copy with method
   LinuxCommand copyWith({
-    String? id,
-    String? name,
     String? description,
-    String? syntax,
-    CommandDifficulty? difficulty,
-    CommandCategory? category,
-    List<CommandExample>? examples,
-    List<CommandParameter>? parameters,
-    List<String>? relatedCommands,
+    String? usage,
+    String? category,
+    String? difficulty,
     List<String>? tags,
-    String? manualUrl,
-    String? videoUrl,
-    int? usageCount,
-    double? averageRating,
-    DateTime? createdAt,
-    DateTime? updatedAt,
-    List<String>? prerequisites,
-    String? warningMessage,
-    bool? isDestructive,
+    List<String>? examples,
+    List<String>? relatedCommands,
     Map<String, dynamic>? metadata,
+    DateTime? updatedAt,
+    String? manPage,
+    List<String>? options,
+    List<String>? parameters,
+    String? syntax,
+    List<Map<String, String>>? commonUseCases,
+    List<String>? warnings,
+    String? shortDescription,
+    bool? requiresRoot,
+    List<String>? supportedShells,
   }) {
     return LinuxCommand(
-      id: id ?? this.id,
-      name: name ?? this.name,
+      id: id,
+      name: name,
       description: description ?? this.description,
-      syntax: syntax ?? this.syntax,
-      difficulty: difficulty ?? this.difficulty,
+      usage: usage ?? this.usage,
       category: category ?? this.category,
-      examples: examples ?? this.examples,
-      parameters: parameters ?? this.parameters,
-      relatedCommands: relatedCommands ?? this.relatedCommands,
-      tags: tags ?? this.tags,
-      manualUrl: manualUrl ?? this.manualUrl,
-      videoUrl: videoUrl ?? this.videoUrl,
-      usageCount: usageCount ?? this.usageCount,
-      averageRating: averageRating ?? this.averageRating,
-      createdAt: createdAt ?? this.createdAt,
-      updatedAt: updatedAt ?? this.updatedAt,
-      prerequisites: prerequisites ?? this.prerequisites,
-      warningMessage: warningMessage ?? this.warningMessage,
-      isDestructive: isDestructive ?? this.isDestructive,
-      metadata: metadata ?? this.metadata,
+      difficulty: difficulty ?? this.difficulty,
+      tags: tags ?? List.from(this.tags),
+      examples: examples ?? List.from(this.examples),
+      relatedCommands: relatedCommands ?? List.from(this.relatedCommands),
+      metadata: metadata ?? Map.from(this.metadata),
+      createdAt: createdAt,
+      updatedAt: updatedAt ?? DateTime.now(),
+      manPage: manPage ?? this.manPage,
+      options: options ?? List.from(this.options),
+      parameters: parameters ?? List.from(this.parameters),
+      syntax: syntax ?? this.syntax,
+      commonUseCases: commonUseCases ?? List.from(this.commonUseCases),
+      warnings: warnings ?? List.from(this.warnings),
+      shortDescription: shortDescription ?? this.shortDescription,
+      requiresRoot: requiresRoot ?? this.requiresRoot,
+      supportedShells: supportedShells ?? List.from(this.supportedShells),
     );
   }
 
   // Helper methods
-  String get difficultyDisplayText {
-    switch (difficulty) {
-      case CommandDifficulty.beginner:
-        return 'ง่าย';
-      case CommandDifficulty.intermediate:
-        return 'ปานกลาง';
-      case CommandDifficulty.advanced:
-        return 'ยาก';
-      case CommandDifficulty.expert:
-        return 'ผู้เชี่ยวชาญ';
+  bool hasOption(String option) => options.any((opt) => opt.startsWith(option));
+
+  bool isInCategory(String categoryName) => category.toLowerCase() == categoryName.toLowerCase();
+
+  bool matchesTag(String tag) => tags.any((t) => t.toLowerCase() == tag.toLowerCase());
+
+  bool isSafeCommand() => !requiresRoot && !warnings.isNotEmpty;
+
+  List<String> getFilteredExamples({String? difficulty}) {
+    if (difficulty == null) return examples;
+
+    // Filter examples based on difficulty
+    switch (difficulty.toLowerCase()) {
+      case 'beginner':
+        return examples.take(3).toList();
+      case 'intermediate':
+        return examples.skip(1).take(4).toList();
+      case 'advanced':
+        return examples.skip(2).toList();
+      default:
+        return examples;
     }
   }
 
-  String get categoryDisplayText {
-    switch (category) {
-      case CommandCategory.fileSystem:
-        return 'ระบบไฟล์';
-      case CommandCategory.textProcessing:
-        return 'ประมวลผลข้อความ';
-      case CommandCategory.systemInfo:
-        return 'ข้อมูลระบบ';
-      case CommandCategory.network:
-        return 'เครือข่าย';
-      case CommandCategory.process:
-        return 'โปรเซส';
-      case CommandCategory.permission:
-        return 'สิทธิ์การเข้าถึง';
-      case CommandCategory.archive:
-        return 'บีบอัดและแตกไฟล์';
-      case CommandCategory.search:
-        return 'ค้นหา';
-      case CommandCategory.ioRedirection:
-        return 'เปลี่ยนทิศทาง I/O';
-      case CommandCategory.environment:
-        return 'สภาพแวดล้อม';
-    }
-  }
-
-  String get categoryIcon {
-    switch (category) {
-      case CommandCategory.fileSystem:
-        return '📁';
-      case CommandCategory.textProcessing:
-        return '📄';
-      case CommandCategory.systemInfo:
-        return '💻';
-      case CommandCategory.network:
-        return '🌐';
-      case CommandCategory.process:
-        return '⚙️';
-      case CommandCategory.permission:
-        return '🔐';
-      case CommandCategory.archive:
-        return '📦';
-      case CommandCategory.search:
-        return '🔍';
-      case CommandCategory.ioRedirection:
-        return '↗️';
-      case CommandCategory.environment:
-        return '🌿';
-    }
-  }
-
-  bool get hasExamples => examples.isNotEmpty;
-  bool get hasParameters => parameters.isNotEmpty;
-  bool get hasRelatedCommands => relatedCommands.isNotEmpty;
-  bool get hasPrerequisites => prerequisites != null && prerequisites!.isNotEmpty;
-  bool get hasWarning => warningMessage != null && warningMessage!.isNotEmpty;
-
-  @override
-  List<Object?> get props => [
-    id,
-    name,
-    description,
-    syntax,
-    difficulty,
-    category,
-    examples,
-    parameters,
-    relatedCommands,
-    tags,
-    manualUrl,
-    videoUrl,
-    usageCount,
-    averageRating,
-    createdAt,
-    updatedAt,
-    prerequisites,
-    warningMessage,
-    isDestructive,
-    metadata,
-  ];
-}
-
-@HiveType(typeId: 5)
-class CommandExample extends Equatable {
-  @HiveField(0)
-  final String command;
-
-  @HiveField(1)
-  final String description;
-
-  @HiveField(2)
-  final String? expectedOutput;
-
-  @HiveField(3)
-  final String? explanation;
-
-  @HiveField(4)
-  final bool isInteractive;
-
-  @HiveField(5)
-  final List<String>? prerequisites;
-
-  const CommandExample({
-    required this.command,
-    required this.description,
-    this.expectedOutput,
-    this.explanation,
-    this.isInteractive = false,
-    this.prerequisites,
-  });
-
-  factory CommandExample.fromMap(Map<String, dynamic> map) {
-    return CommandExample(
-      command: map['command'] ?? '',
-      description: map['description'] ?? '',
-      expectedOutput: map['expectedOutput'],
-      explanation: map['explanation'],
-      isInteractive: map['isInteractive'] ?? false,
-      prerequisites: map['prerequisites'] != null
-          ? List<String>.from(map['prerequisites'])
-          : null,
-    );
-  }
-
-  Map<String, dynamic> toMap() {
-    return {
-      'command': command,
-      'description': description,
-      'expectedOutput': expectedOutput,
-      'explanation': explanation,
-      'isInteractive': isInteractive,
-      'prerequisites': prerequisites,
-    };
-  }
-
-  @override
-  List<Object?> get props => [
-    command,
-    description,
-    expectedOutput,
-    explanation,
-    isInteractive,
-    prerequisites,
-  ];
-}
-
-@HiveType(typeId: 6)
-class CommandParameter extends Equatable {
-  @HiveField(0)
-  final String name;
-
-  @HiveField(1)
-  final String shortForm;
-
-  @HiveField(2)
-  final String longForm;
-
-  @HiveField(3)
-  final String description;
-
-  @HiveField(4)
-  final bool isRequired;
-
-  @HiveField(5)
-  final String? defaultValue;
-
-  @HiveField(6)
-  final List<String>? validValues;
-
-  @HiveField(7)
-  final String? example;
-
-  const CommandParameter({
-    required this.name,
-    required this.shortForm,
-    required this.longForm,
-    required this.description,
-    this.isRequired = false,
-    this.defaultValue,
-    this.validValues,
-    this.example,
-  });
-
-  factory CommandParameter.fromMap(Map<String, dynamic> map) {
-    return CommandParameter(
-      name: map['name'] ?? '',
-      shortForm: map['shortForm'] ?? '',
-      longForm: map['longForm'] ?? '',
-      description: map['description'] ?? '',
-      isRequired: map['isRequired'] ?? false,
-      defaultValue: map['defaultValue'],
-      validValues: map['validValues'] != null
-          ? List<String>.from(map['validValues'])
-          : null,
-      example: map['example'],
-    );
-  }
-
-  Map<String, dynamic> toMap() {
+  Map<String, dynamic> getDisplayInfo() {
     return {
       'name': name,
-      'shortForm': shortForm,
-      'longForm': longForm,
-      'description': description,
-      'isRequired': isRequired,
-      'defaultValue': defaultValue,
-      'validValues': validValues,
-      'example': example,
+      'shortDescription': shortDescription ?? description,
+      'category': categoryDisplayName,
+      'difficulty': difficultyDisplayName,
+      'isPopular': isPopular,
+      'requiresRoot': requiresRoot,
+      'hasWarnings': warnings.isNotEmpty,
+      'exampleCount': examples.length,
+      'optionCount': options.length,
+      'tags': tags,
     };
   }
 
   @override
-  List<Object?> get props => [
-    name,
-    shortForm,
-    longForm,
-    description,
-    isRequired,
-    defaultValue,
-    validValues,
-    example,
-  ];
+  String toString() {
+    return 'LinuxCommand(name: $name, category: $category, difficulty: $difficulty)';
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is LinuxCommand && other.id == id;
+  }
+
+  @override
+  int get hashCode => id.hashCode;
 }

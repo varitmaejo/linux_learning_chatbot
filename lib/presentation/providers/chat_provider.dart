@@ -1,540 +1,383 @@
 import 'package:flutter/foundation.dart';
-import 'package:uuid/uuid.dart';
-import '../../core/services/dialogflow_service.dart';
-import '../../core/services/firebase_service.dart';
-import '../../core/services/analytics_service.dart';
+import 'package:flutter/material.dart';
+
+import '../../core/constants/app_constants.dart';
 import '../../data/models/chat_message.dart';
 import '../../data/models/user_model.dart';
-import '../../data/models/linux_command.dart';
+import '../../data/repositories/chat_repository.dart';
+import '../../domain/entities/message.dart';
+import '../../domain/entities/user.dart';
+import '../../domain/usecases/send_message_usecase.dart';
 
 enum ChatState {
-  idle,
+  initial,
   loading,
+  loaded,
   typing,
-  error
+  error,
 }
 
 class ChatProvider extends ChangeNotifier {
-  final DialogflowService _dialogflowService = DialogflowService.instance;
-  final FirebaseService _firebaseService = FirebaseService.instance;
-  final AnalyticsService _analyticsService = AnalyticsService.instance;
+  final ChatRepository _chatRepository;
+  late final SendMessageUsecase _sendMessageUsecase;
+
+  ChatProvider({required ChatRepository chatRepository})
+      : _chatRepository = chatRepository {
+    _sendMessageUsecase = SendMessageUsecase(_chatRepository);
+    _initialize();
+  }
 
   // State
-  ChatState _state = ChatState.idle;
-  List<ChatMessage> _messages = [];
-  UserModel? _currentUser;
-  String? _sessionId;
-  String? _errorMessage;
-  bool _isTyping = false;
-
-  // Getters
+  ChatState _state = ChatState.initial;
   ChatState get state => _state;
-  List<ChatMessage> get messages => List.unmodifiable(_messages);
-  UserModel? get currentUser => _currentUser;
-  String? get sessionId => _sessionId;
-  String? get errorMessage => _errorMessage;
+
+  // User
+  User? _currentUser;
+  User? get currentUser => _currentUser;
+
+  // Messages
+  List<Message> _messages = [];
+  List<Message> get messages => List.unmodifiable(_messages);
+
+  // Current session
+  String _sessionId = AppConstants.dialogflowSessionId;
+  String get sessionId => _sessionId;
+
+  // Typing indicator
+  bool _isTyping = false;
   bool get isTyping => _isTyping;
-  bool get hasMessages => _messages.isNotEmpty;
 
-  /// Initialize chat provider
-  Future<void> initialize(String? userId) async {
-    try {
-      if (userId != null) {
-        _sessionId = 'chat_${userId}_${DateTime.now().millisecondsSinceEpoch}';
-        await _loadChatHistory(userId);
-      }
-    } catch (e) {
-      _setError('Failed to initialize chat: ${e.toString()}');
-    }
+  // Error handling
+  String? _errorMessage;
+  String? get errorMessage => _errorMessage;
+
+  // Quick replies
+  List<String> _quickReplies = [];
+  List<String> get quickReplies => List.unmodifiable(_quickReplies);
+
+  // Voice input
+  bool _isListening = false;
+  bool get isListening => _isListening;
+
+  // Message statistics
+  int get messageCount => _messages.length;
+  int get userMessageCount => _messages.where((m) => m.isFromUser).length;
+  int get botMessageCount => _messages.where((m) => !m.isFromUser).length;
+
+  void _initialize() {
+    _loadChatHistory();
+    _setupQuickReplies();
   }
 
-  /// Update current user
-  void updateUser(UserModel? user) {
+  void updateUser(User? user) {
     _currentUser = user;
-    if (user != null && _sessionId == null) {
-      initialize(user.id);
+    if (user != null) {
+      _sessionId = 'session_${user.id}_${DateTime.now().millisecondsSinceEpoch}';
     }
     notifyListeners();
   }
 
-  /// Send message
-  Future<void> sendMessage(String text, {MessageType type = MessageType.text}) async {
-    if (text.trim().isEmpty) return;
-
-    try {
-      _setState(ChatState.loading);
-      _setTyping(true);
-
-      // Create user message
-      final userMessage = ChatMessage(
-        id: const Uuid().v4(),
-        text: text.trim(),
-        isUser: true,
-        timestamp: DateTime.now(),
-        messageType: type,
-        userId: _currentUser?.id,
-        sessionId: _sessionId,
-      );
-
-      // Add user message
-      _addMessage(userMessage);
-      await _saveChatMessage(userMessage);
-
-      // Log analytics
-      await _analyticsService.logEvent('chat_message_sent', parameters: {
-        'message_type': type.name,
-        'message_length': text.length,
-        'session_id': _sessionId ?? 'unknown',
-      });
-
-      // Process message based on type
-      switch (type) {
-        case MessageType.text:
-          await _handleTextMessage(text);
-          break;
-        case MessageType.linuxCommand:
-          await _handleLinuxCommand(text);
-          break;
-        case MessageType.voice:
-          await _handleVoiceMessage(text);
-          break;
-        default:
-          await _handleGeneralQuery(text);
-      }
-
-    } catch (e) {
-      _setError('Failed to send message: ${e.toString()}');
-    } finally {
-      _setTyping(false);
-      _setState(ChatState.idle);
-    }
-  }
-
-  /// Handle text message
-  Future<void> _handleTextMessage(String text) async {
-    try {
-      // Check if it's a command query
-      if (_isLinuxCommandQuery(text)) {
-        await _handleLinuxCommand(_extractCommandFromQuery(text));
-        return;
-      }
-
-      // Check if it's a learning path request
-      if (_isLearningPathQuery(text)) {
-        await _handleLearningPathRequest(text);
-        return;
-      }
-
-      // Check if it's a quiz request
-      if (_isQuizQuery(text)) {
-        await _handleQuizRequest(text);
-        return;
-      }
-
-      // General Dialogflow query
-      await _handleGeneralQuery(text);
-
-    } catch (e) {
-      await _handleError(e.toString());
-    }
-  }
-
-  /// Handle Linux command
-  Future<void> _handleLinuxCommand(String command) async {
-    try {
-      // Get command explanation from Dialogflow
-      final response = await _dialogflowService.explainCommand(command);
-
-      final botMessage = ChatMessage(
-        id: const Uuid().v4(),
-        text: response.explanation,
-        isUser: false,
-        timestamp: DateTime.now(),
-        messageType: MessageType.linuxCommand,
-        metadata: {
-          'command': command,
-          'examples': response.examples,
-          'relatedCommands': response.relatedCommands,
-          'tips': response.tips,
-        },
-        userId: _currentUser?.id,
-        sessionId: _sessionId,
-      );
-
-      _addMessage(botMessage);
-      await _saveChatMessage(botMessage);
-
-      // Log command explanation
-      await _analyticsService.logCommandExecution(
-        command: command,
-        category: 'explanation',
-        successful: !response.isError,
-        source: 'chat',
-      );
-
-    } catch (e) {
-      await _handleError('ขออภัย ไม่สามารถอธิบายคำสั่งนี้ได้');
-    }
-  }
-
-  /// Handle voice message
-  Future<void> _handleVoiceMessage(String transcribedText) async {
-    // Process voice message same as text but with different analytics
-    await _analyticsService.logVoiceInteraction(
-      action: 'speech_recognized',
-      language: 'th-TH',
-      confidence: 0.8,
-    );
-
-    await _handleTextMessage(transcribedText);
-  }
-
-  /// Handle learning path request
-  Future<void> _handleLearningPathRequest(String query) async {
-    try {
-      final userProgress = await _getCurrentUserProgress();
-
-      final response = await _dialogflowService.generateLearningPath(
-        currentLevel: userProgress['difficulty'] ?? 'beginner',
-        completedCommands: List<String>.from(userProgress['completedCommands'] ?? []),
-      );
-
-      final pathMessage = ChatMessage(
-        id: const Uuid().v4(),
-        text: response.explanation,
-        isUser: false,
-        timestamp: DateTime.now(),
-        messageType: MessageType.learningPath,
-        metadata: {
-          'recommendedCommands': response.recommendedCommands,
-          'nextTopic': response.nextTopic,
-          'difficulty': response.difficulty,
-        },
-        userId: _currentUser?.id,
-        sessionId: _sessionId,
-      );
-
-      _addMessage(pathMessage);
-      await _saveChatMessage(pathMessage);
-
-    } catch (e) {
-      await _handleError('ไม่สามารถสร้างเส้นทางการเรียนรู้ได้');
-    }
-  }
-
-  /// Handle quiz request
-  Future<void> _handleQuizRequest(String query) async {
-    try {
-      final userProgress = await _getCurrentUserProgress();
-      final topic = _extractTopicFromQuery(query);
-
-      final quiz = await _dialogflowService.generateQuiz(
-        topic: topic,
-        difficulty: userProgress['difficulty'] ?? 'beginner',
-      );
-
-      final quizMessage = ChatMessage(
-        id: const Uuid().v4(),
-        text: 'แบบทดสอบเรื่อง $topic พร้อมแล้ว!',
-        isUser: false,
-        timestamp: DateTime.now(),
-        messageType: MessageType.quiz,
-        metadata: {
-          'quiz': {
-            'topic': quiz.topic,
-            'difficulty': quiz.difficulty,
-            'questions': quiz.questions.map((q) => {
-              'id': q.id,
-              'question': q.question,
-              'options': q.options,
-              'correctAnswer': q.correctAnswer,
-              'explanation': q.explanation,
-            }).toList(),
-            'timeLimit': quiz.timeLimit,
-          }
-        },
-        quickReplies: ['เริ่มทำแบบทดสอบ', 'ข้ามไปก่อน'],
-        userId: _currentUser?.id,
-        sessionId: _sessionId,
-      );
-
-      _addMessage(quizMessage);
-      await _saveChatMessage(quizMessage);
-
-      // Log quiz generation
-      await _analyticsService.logQuizStart(
-        topic: quiz.topic,
-        difficulty: quiz.difficulty,
-        questionCount: quiz.questions.length,
-      );
-
-    } catch (e) {
-      await _handleError('ไม่สามารถสร้างแบบทดสอบได้');
-    }
-  }
-
-  /// Handle general query
-  Future<void> _handleGeneralQuery(String query) async {
-    try {
-      final response = await _dialogflowService.detectIntent(query);
-
-      final botMessage = ChatMessage(
-        id: const Uuid().v4(),
-        text: response.fulfillmentText,
-        isUser: false,
-        timestamp: DateTime.now(),
-        messageType: MessageType.text,
-        confidence: response.confidence,
-        metadata: {
-          'intentName': response.intentName,
-          'parameters': response.parameters,
-        },
-        userId: _currentUser?.id,
-        sessionId: _sessionId,
-      );
-
-      _addMessage(botMessage);
-      await _saveChatMessage(botMessage);
-
-      // Add quick replies if available
-      final quickReplies = _generateQuickReplies(response.intentName);
-      if (quickReplies.isNotEmpty) {
-        final quickReplyMessage = botMessage.copyWith(
-          quickReplies: quickReplies,
-        );
-        _updateMessage(botMessage.id, quickReplyMessage);
-      }
-
-    } catch (e) {
-      await _handleError('ขออภัย ไม่เข้าใจคำถามของคุณ');
-    }
-  }
-
-  /// Handle error
-  Future<void> _handleError(String errorMessage) async {
-    final errorMsg = ChatMessage(
-      id: const Uuid().v4(),
-      text: errorMessage,
-      isUser: false,
-      timestamp: DateTime.now(),
-      messageType: MessageType.error,
-      userId: _currentUser?.id,
-      sessionId: _sessionId,
-    );
-
-    _addMessage(errorMsg);
-    await _saveChatMessage(errorMsg);
-  }
-
-  /// Get current user progress
-  Future<Map<String, dynamic>> _getCurrentUserProgress() async {
-    if (_currentUser == null) {
-      return {'difficulty': 'beginner', 'completedCommands': []};
-    }
-
-    // This would typically come from ProgressProvider
-    return {
-      'difficulty': _currentUser!.preferences.difficultyLevel,
-      'completedCommands': [], // Get from progress provider
-    };
-  }
-
-  /// Query analysis methods
-  bool _isLinuxCommandQuery(String text) {
-    final commandKeywords = ['คำสั่ง', 'command', 'อธิบาย', 'explain', 'ใช้ยังไง'];
-    return commandKeywords.any((keyword) =>
-        text.toLowerCase().contains(keyword.toLowerCase()));
-  }
-
-  bool _isLearningPathQuery(String text) {
-    final pathKeywords = ['เส้นทาง', 'แนะนำ', 'เรียนอะไรต่อ', 'หัวข้อถัดไป'];
-    return pathKeywords.any((keyword) =>
-        text.toLowerCase().contains(keyword.toLowerCase()));
-  }
-
-  bool _isQuizQuery(String text) {
-    final quizKeywords = ['แบบทดสอบ', 'ทดสอบ', 'สอบ', 'quiz', 'test'];
-    return quizKeywords.any((keyword) =>
-        text.toLowerCase().contains(keyword.toLowerCase()));
-  }
-
-  String _extractCommandFromQuery(String text) {
-    // Simple extraction - in production, use more sophisticated NLP
-    final words = text.split(' ');
-    for (final word in words) {
-      if (word.length > 1 && !_isThaiWord(word)) {
-        return word;
-      }
-    }
-    return text;
-  }
-
-  String _extractTopicFromQuery(String text) {
-    // Extract topic from quiz query
-    if (text.contains('ระบบไฟล์')) return 'ระบบไฟล์';
-    if (text.contains('เครือข่าย')) return 'เครือข่าย';
-    if (text.contains('สิทธิ์')) return 'สิทธิ์การเข้าถึง';
-    return 'พื้นฐาน';
-  }
-
-  bool _isThaiWord(String word) {
-    return RegExp(r'[\u0E00-\u0E7F]').hasMatch(word);
-  }
-
-  /// Generate quick replies based on intent
-  List<String> _generateQuickReplies(String intentName) {
-    switch (intentName) {
-      case 'command.explain':
-        return ['ยกตัวอย่างให้หน่อย', 'คำสั่งที่เกี่ยวข้อง', 'ฝึกใช้คำสั่งนี้'];
-      case 'help.general':
-        return ['เรียนรู้คำสั่งพื้นฐาน', 'ทดสอบความรู้', 'แนะนำหัวข้อ'];
-      case 'learning.path':
-        return ['เริ่มเรียนเลย', 'ดูตัวอย่างคำสั่ง', 'ทำแบบทดสอบ'];
-      default:
-        return ['ต้องการความช่วยเหลือ', 'คำสั่งที่น่าสนใจ', 'เรียนต่อ'];
-    }
-  }
-
-  /// Message management
-  void _addMessage(ChatMessage message) {
-    _messages.add(message);
-    notifyListeners();
-  }
-
-  void _updateMessage(String messageId, ChatMessage updatedMessage) {
-    final index = _messages.indexWhere((m) => m.id == messageId);
-    if (index != -1) {
-      _messages[index] = updatedMessage;
-      notifyListeners();
-    }
-  }
-
-  void removeMessage(String messageId) {
-    _messages.removeWhere((message) => message.id == messageId);
-    notifyListeners();
-  }
-
-  void clearMessages() {
-    _messages.clear();
-    notifyListeners();
-  }
-
-  /// Mark message as favorite
-  void toggleFavorite(String messageId) {
-    final index = _messages.indexWhere((m) => m.id == messageId);
-    if (index != -1) {
-      final message = _messages[index];
-      _messages[index] = message.copyWith(isFavorite: !message.isFavorite);
-      notifyListeners();
-
-      // Save to Firebase
-      if (_currentUser != null) {
-        _saveChatMessage(_messages[index]);
-      }
-    }
-  }
-
-  /// Mark messages as read
-  void markMessagesAsRead() {
-    bool hasChanges = false;
-    for (int i = 0; i < _messages.length; i++) {
-      if (!_messages[i].isRead && !_messages[i].isUser) {
-        _messages[i] = _messages[i].copyWith(isRead: true);
-        hasChanges = true;
-      }
-    }
-
-    if (hasChanges) {
-      notifyListeners();
-    }
-  }
-
-  /// Save chat message to Firebase
-  Future<void> _saveChatMessage(ChatMessage message) async {
+  Future<void> _loadChatHistory() async {
     if (_currentUser == null) return;
 
+    _setState(ChatState.loading);
+
     try {
-      await _firebaseService.saveChatMessage(
-        _currentUser!.id,
-        message.toMap(),
+      final history = await _chatRepository.getChatHistory(_currentUser!.id);
+      _messages = history;
+
+      if (_messages.isEmpty) {
+        _addWelcomeMessage();
+      }
+
+      _setState(ChatState.loaded);
+    } catch (error) {
+      _setError('ไม่สามารถโหลดประวัติการสนทนาได้: ${error.toString()}');
+    }
+  }
+
+  void _addWelcomeMessage() {
+    final welcomeMessage = ChatMessage(
+      id: 'welcome_${DateTime.now().millisecondsSinceEpoch}',
+      text: _getWelcomeMessage(),
+      isFromUser: false,
+      timestamp: DateTime.now(),
+      messageType: MessageType.text,
+      quickReplies: [
+        'สอนคำสั่ง ls ให้ฉันหน่อย',
+        'คำสั่งไหนใช้สำหรับดูไฟล์?',
+        'ฉันเป็นมือใหม่ เริ่มจากไหนดี?',
+        'แสดงคำสั่งที่นิยม',
+      ],
+    );
+
+    _messages.insert(0, welcomeMessage);
+    _quickReplies = welcomeMessage.quickReplies ?? [];
+  }
+
+  String _getWelcomeMessage() {
+    if (_currentUser == null) {
+      return 'สวัสดีครับ! ยินดีต้อนรับสู่ระบบเรียนรู้คำสั่ง Linux แบบโต้ตอบ 🐧\n\nผมจะช่วยให้คุณเรียนรู้คำสั่ง Linux แบบง่ายๆ และสนุก มีอะไรให้ช่วยไหมครับ?';
+    }
+
+    final user = _currentUser!;
+    final timeOfDay = _getTimeOfDay();
+
+    if (user.isNewUser) {
+      return '$timeOfDay คุณ${user.name}! 🎉\n\nยินดีต้อนรับสู่การเรียนรู้คำสั่ง Linux ครั้งแรก!\n\nผมจะเป็นครูสอนส่วนตัวของคุณ พร้อมช่วยให้คุณเชี่ยวชาญคำสั่ง Linux แบบสเต็ปบายสเต็ป\n\nเริ่มต้นจากไหนดีครับ?';
+    }
+
+    final streak = user.hasActiveStreak ? ' 🔥 สเตรก ${user.streakDays} วัน!' : '';
+
+    return '$timeOfDay คุณ${user.name}!$streak\n\nเรียนรู้คำสั่ง Linux กันต่อเลยไหมครับ?\n\nระดับปัจจุบันของคุณ: ${user.skillLevelDisplayName} (Level ${user.currentLevel})';
+  }
+
+  String _getTimeOfDay() {
+    final hour = DateTime.now().hour;
+    if (hour < 12) return 'สวัสดีตอนเช้า';
+    if (hour < 17) return 'สวัสดีตอนบ่าย';
+    return 'สวัสดีตอนเย็น';
+  }
+
+  void _setupQuickReplies() {
+    _quickReplies = [
+      'สอนคำสั่ง ls ให้ฉันหน่อย',
+      'คำสั่งไหนใช้สำหรับดูไฟล์?',
+      'ฉันเป็นมือใหม่ เริ่มจากไหนดี?',
+      'แสดงคำสั่งที่นิยม',
+    ];
+  }
+
+  Future<void> sendMessage(String text, {MessageType? type}) async {
+    if (text.trim().isEmpty || _currentUser == null) return;
+
+    final userMessage = ChatMessage(
+      id: 'user_${DateTime.now().millisecondsSinceEpoch}',
+      text: text.trim(),
+      isFromUser: true,
+      timestamp: DateTime.now(),
+      messageType: type ?? MessageType.text,
+    );
+
+    // Add user message immediately
+    _messages.insert(0, userMessage);
+    _quickReplies.clear();
+    notifyListeners();
+
+    // Show typing indicator
+    _setTyping(true);
+
+    try {
+      // Send message and get AI response
+      final response = await _sendMessageUsecase.execute(
+        text: text,
+        userId: _currentUser!.id,
+        sessionId: _sessionId,
       );
-    } catch (e) {
-      print('Error saving chat message: $e');
-    }
-  }
 
-  /// Load chat history
-  Future<void> _loadChatHistory(String userId) async {
-    try {
-      final messagesStream = _firebaseService.getChatMessages(userId);
+      _setTyping(false);
 
-      messagesStream.listen((snapshot) {
-        final messages = snapshot.docs
-            .map((doc) => ChatMessage.fromMap(doc.data() as Map<String, dynamic>))
-            .toList();
+      // Add AI response
+      final aiMessage = ChatMessage(
+        id: 'ai_${DateTime.now().millisecondsSinceEpoch}',
+        text: response.text,
+        isFromUser: false,
+        timestamp: DateTime.now(),
+        messageType: MessageType.text,
+        quickReplies: response.quickReplies,
+        commandSuggestions: response.commandSuggestions,
+        metadata: response.metadata,
+      );
 
-        _messages = messages;
-        notifyListeners();
-      });
+      _messages.insert(0, aiMessage);
+      _quickReplies = response.quickReplies ?? [];
 
-    } catch (e) {
-      print('Error loading chat history: $e');
-    }
-  }
+      // Save to local storage
+      await _saveChatHistory();
 
-  /// State management
-  void _setState(ChatState newState) {
-    if (_state != newState) {
-      _state = newState;
+      _setState(ChatState.loaded);
+    } catch (error) {
+      _setTyping(false);
+      _setError('ไม่สามารถส่งข้อความได้: ${error.toString()}');
+
+      // Add error message
+      final errorMessage = ChatMessage(
+        id: 'error_${DateTime.now().millisecondsSinceEpoch}',
+        text: 'ขออพกเหตุครับ เกิดข้อผิดพลาดในการส่งข้อความ กรุณาลองใหม่อีกครั้ง',
+        isFromUser: false,
+        timestamp: DateTime.now(),
+        messageType: MessageType.error,
+      );
+
+      _messages.insert(0, errorMessage);
       notifyListeners();
     }
+  }
+
+  Future<void> sendQuickReply(String reply) async {
+    await sendMessage(reply);
+  }
+
+  Future<void> sendCommand(String command) async {
+    await sendMessage(command, type: MessageType.command);
+  }
+
+  Future<void> sendVoiceMessage(String text) async {
+    await sendMessage(text, type: MessageType.voice);
   }
 
   void _setTyping(bool typing) {
-    if (_isTyping != typing) {
-      _isTyping = typing;
-      notifyListeners();
+    _isTyping = typing;
+    notifyListeners();
+  }
+
+  void startListening() {
+    _isListening = true;
+    notifyListeners();
+  }
+
+  void stopListening() {
+    _isListening = false;
+    notifyListeners();
+  }
+
+  Future<void> _saveChatHistory() async {
+    if (_currentUser == null) return;
+
+    try {
+      // Keep only recent messages to avoid storage issues
+      final recentMessages = _messages.take(AppConstants.maxChatHistory).toList();
+      await _chatRepository.saveChatHistory(_currentUser!.id, recentMessages);
+    } catch (error) {
+      debugPrint('Failed to save chat history: $error');
     }
+  }
+
+  Future<void> clearChatHistory() async {
+    if (_currentUser == null) return;
+
+    try {
+      await _chatRepository.clearChatHistory(_currentUser!.id);
+      _messages.clear();
+      _addWelcomeMessage();
+      _setState(ChatState.loaded);
+    } catch (error) {
+      _setError('ไม่สามารถลบประวัติการสนทนาได้');
+    }
+  }
+
+  Future<void> exportChatHistory() async {
+    // Implementation for exporting chat history
+    // This could save to a file or share via platform share dialog
+  }
+
+  void retryLastMessage() {
+    if (_messages.isNotEmpty && _messages.first.isFromUser) {
+      final lastUserMessage = _messages.first;
+      sendMessage(lastUserMessage.text, type: lastUserMessage.messageType);
+    }
+  }
+
+  void _setState(ChatState newState) {
+    _state = newState;
+    _errorMessage = null;
+    notifyListeners();
   }
 
   void _setError(String message) {
+    _state = ChatState.error;
     _errorMessage = message;
-    _setState(ChatState.error);
+    _isTyping = false;
+    notifyListeners();
   }
 
   void clearError() {
-    _errorMessage = null;
     if (_state == ChatState.error) {
-      _setState(ChatState.idle);
+      _setState(ChatState.loaded);
     }
   }
 
-  /// Get unread message count
-  int get unreadCount {
-    return _messages.where((m) => !m.isRead && !m.isUser).length;
+  // Message search functionality
+  List<Message> searchMessages(String query) {
+    if (query.trim().isEmpty) return [];
+
+    final lowercaseQuery = query.toLowerCase();
+    return _messages.where((message) {
+      return message.text.toLowerCase().contains(lowercaseQuery);
+    }).toList();
   }
 
-  /// Get favorite messages
-  List<ChatMessage> get favoriteMessages {
-    return _messages.where((m) => m.isFavorite).toList();
+  // Message filtering
+  List<Message> getMessagesByType(MessageType type) {
+    return _messages.where((message) => message.messageType == type).toList();
   }
 
-  /// Search messages
-  List<ChatMessage> searchMessages(String query) {
-    if (query.trim().isEmpty) return _messages;
-
-    return _messages.where((message) =>
-        message.text.toLowerCase().contains(query.toLowerCase())).toList();
+  List<Message> getUserMessages() {
+    return _messages.where((message) => message.isFromUser).toList();
   }
 
-  /// Get messages by type
-  List<ChatMessage> getMessagesByType(MessageType type) {
-    return _messages.where((m) => m.messageType == type).toList();
+  List<Message> getBotMessages() {
+    return _messages.where((message) => !message.isFromUser).toList();
+  }
+
+  // Get messages from today
+  List<Message> getTodaysMessages() {
+    final today = DateTime.now();
+    final startOfDay = DateTime(today.year, today.month, today.day);
+
+    return _messages.where((message) {
+      return message.timestamp.isAfter(startOfDay);
+    }).toList();
+  }
+
+  // Analytics
+  Map<String, dynamic> getChatAnalytics() {
+    final totalMessages = _messages.length;
+    final userMessages = getUserMessages().length;
+    final botMessages = getBotMessages().length;
+    final commandMessages = getMessagesByType(MessageType.command).length;
+    final voiceMessages = getMessagesByType(MessageType.voice).length;
+
+    final firstMessage = _messages.isNotEmpty ? _messages.last.timestamp : null;
+    final lastMessage = _messages.isNotEmpty ? _messages.first.timestamp : null;
+
+    Duration? sessionDuration;
+    if (firstMessage != null && lastMessage != null) {
+      sessionDuration = lastMessage.difference(firstMessage);
+    }
+
+    return {
+      'totalMessages': totalMessages,
+      'userMessages': userMessages,
+      'botMessages': botMessages,
+      'commandMessages': commandMessages,
+      'voiceMessages': voiceMessages,
+      'sessionDuration': sessionDuration?.inMinutes ?? 0,
+      'averageResponseTime': _calculateAverageResponseTime(),
+    };
+  }
+
+  double _calculateAverageResponseTime() {
+    final responseTimes = <Duration>[];
+
+    for (int i = 0; i < _messages.length - 1; i++) {
+      final current = _messages[i];
+      final next = _messages[i + 1];
+
+      if (!current.isFromUser && next.isFromUser) {
+        responseTimes.add(next.timestamp.difference(current.timestamp));
+      }
+    }
+
+    if (responseTimes.isEmpty) return 0.0;
+
+    final totalMs = responseTimes.fold(0, (sum, duration) => sum + duration.inMilliseconds);
+    return totalMs / responseTimes.length / 1000; // Return in seconds
   }
 
   @override
   void dispose() {
-    // Clean up any streams or subscriptions
+    _saveChatHistory();
     super.dispose();
   }
 }
