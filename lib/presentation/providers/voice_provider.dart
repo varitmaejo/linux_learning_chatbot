@@ -1,360 +1,317 @@
+import 'dart:async';
 import 'package:flutter/foundation.dart';
-import '../services/voice_service.dart';
+import '../../core/services/voice_service.dart';
+import '../../data/models/user_model.dart';
 
-class VoiceProvider with ChangeNotifier {
-  final VoiceService _voiceService;
+class VoiceProvider extends ChangeNotifier {
+  final VoiceService _voiceService = VoiceService.instance;
 
-  // State variables
-  bool _isEnabled = true;
-  bool _isSpeaking = false;
-  bool _isListening = false;
-  bool _isInitialized = false;
-  String _lastRecognizedText = '';
-  String _lastSpokenText = '';
-  double _speechRate = 0.5;
-  double _volume = 1.0;
-  double _pitch = 1.0;
-  String _language = 'th-TH';
-  String _errorMessage = '';
-  bool _hasError = false;
+  // State
+  UserModel? _currentUser;
+  StreamSubscription<String>? _speechSubscription;
+  StreamSubscription<VoiceServiceState>? _stateSubscription;
+  StreamSubscription<String>? _errorSubscription;
 
-  VoiceProvider(this._voiceService);
+  // Settings
+  bool _voiceInputEnabled = true;
+  bool _voiceOutputEnabled = true;
+  bool _autoListen = false;
+  bool _continuousListening = false;
+  VoiceRecognitionLanguage _recognitionLanguage = VoiceRecognitionLanguage.thai;
+
+  // Callbacks
+  Function(String)? _onSpeechResult;
+  Function(String)? _onSpeechError;
+  Function(VoiceServiceState)? _onStateChanged;
 
   // Getters
-  bool get isEnabled => _isEnabled;
-  bool get isSpeaking => _isSpeaking;
-  bool get isListening => _isListening;
-  bool get isInitialized => _isInitialized;
-  String get lastRecognizedText => _lastRecognizedText;
-  String get lastSpokenText => _lastSpokenText;
-  double get speechRate => _speechRate;
-  double get volume => _volume;
-  double get pitch => _pitch;
-  String get language => _language;
-  String get errorMessage => _errorMessage;
-  bool get hasError => _hasError;
+  VoiceService get voiceService => _voiceService;
+  UserModel? get currentUser => _currentUser;
+  bool get isInitialized => _voiceService.isInitialized;
+  bool get isListening => _voiceService.isListening;
+  bool get isSpeaking => _voiceService.isSpeaking;
+  VoiceServiceState get state => _voiceService.state;
+  String get lastWords => _voiceService.lastWords;
+  double get confidence => _voiceService.confidence;
 
-  // Initialize voice service
+  // Settings getters
+  bool get voiceInputEnabled => _voiceInputEnabled;
+  bool get voiceOutputEnabled => _voiceOutputEnabled;
+  bool get autoListen => _autoListen;
+  bool get continuousListening => _continuousListening;
+  VoiceRecognitionLanguage get recognitionLanguage => _recognitionLanguage;
+  double get speechRate => _voiceService.speechRate;
+  double get pitch => _voiceService.pitch;
+  double get volume => _voiceService.volume;
+
+  /// Initialize provider
   Future<void> initialize() async {
     try {
-      _hasError = false;
-      _errorMessage = '';
-      notifyListeners();
-
-      final ttsInitialized = await _voiceService.initializeTts();
-      final sttInitialized = await _voiceService.initializeStt();
-
-      _isInitialized = ttsInitialized || sttInitialized;
-
-      if (!_isInitialized) {
-        _setError('ไม่สามารถเริ่มต้นระบบเสียงได้');
-      }
-
-      notifyListeners();
+      await _voiceService.initialize();
+      _setupListeners();
     } catch (e) {
-      _setError('เกิดข้อผิดพลาดในการเริ่มต้นระบบเสียง: $e');
+      print('Error initializing voice provider: $e');
     }
   }
 
-  // Enable/disable voice features
-  void setEnabled(bool enabled) {
-    _isEnabled = enabled;
-    if (!enabled) {
-      stopSpeaking();
-      stopListening();
+  /// Update current user and apply preferences
+  void updateUser(UserModel? user) {
+    _currentUser = user;
+    if (user != null) {
+      _applyUserPreferences(user.preferences);
     }
     notifyListeners();
   }
 
-  // Text-to-Speech methods
-  Future<void> speak(String text) async {
-    if (!_isEnabled || !_isInitialized) return;
+  /// Apply user preferences
+  void _applyUserPreferences(UserPreferences preferences) {
+    _voiceInputEnabled = preferences.enableVoiceInput;
+    _voiceOutputEnabled = preferences.enableVoiceOutput;
 
-    try {
-      _hasError = false;
-      _errorMessage = '';
-      _isSpeaking = true;
-      _lastSpokenText = text;
-      notifyListeners();
+    // Apply voice settings
+    _voiceService.setSpeechRate(preferences.voiceSpeed);
+    _voiceService.setTTSLanguage(preferences.voiceLanguage);
 
-      final success = await _voiceService.speak(text);
-      if (!success) {
-        _setError('ไม่สามารถพูดข้อความได้');
+    // Set recognition language based on user preference
+    final lang = preferences.language == 'en'
+        ? VoiceRecognitionLanguage.english
+        : VoiceRecognitionLanguage.thai;
+    setRecognitionLanguage(lang);
+
+    notifyListeners();
+  }
+
+  /// Setup event listeners
+  void _setupListeners() {
+    _speechSubscription = _voiceService.onSpeechResult.listen((result) {
+      _onSpeechResult?.call(result);
+
+      // Handle continuous listening
+      if (_continuousListening && _voiceInputEnabled) {
+        _restartListeningDelayed();
       }
+    });
 
-      // Update speaking state periodically
-      _updateSpeakingState();
-    } catch (e) {
-      _setError('เกิดข้อผิดพลาดในการพูด: $e');
-    }
-  }
-
-  Future<void> stopSpeaking() async {
-    try {
-      await _voiceService.stop();
-      _isSpeaking = false;
+    _stateSubscription = _voiceService.onStateChanged.listen((state) {
+      _onStateChanged?.call(state);
       notifyListeners();
-    } catch (e) {
-      _setError('เกิดข้อผิดพลาดในการหยุดพูด: $e');
-    }
+    });
+
+    _errorSubscription = _voiceService.onError.listen((error) {
+      _onSpeechError?.call(error);
+    });
   }
 
-  Future<void> pauseSpeaking() async {
-    try {
-      await _voiceService.pause();
-      _isSpeaking = false;
-      notifyListeners();
-    } catch (e) {
-      _setError('เกิดข้อผิดพลาดในการพักการพูด: $e');
-    }
+  /// Set callbacks
+  void setSpeechResultCallback(Function(String) callback) {
+    _onSpeechResult = callback;
   }
 
-  // Speech-to-Text methods
+  void setSpeechErrorCallback(Function(String) callback) {
+    _onSpeechError = callback;
+  }
+
+  void setStateChangedCallback(Function(VoiceServiceState) callback) {
+    _onStateChanged = callback;
+  }
+
+  /// Start listening
   Future<void> startListening({
-    required Function(String) onResult,
-    Function(String)? onPartialResult,
-    Duration? listenFor,
+    Duration? timeout,
+    VoiceRecognitionLanguage? language,
   }) async {
-    if (!_isEnabled || !_isInitialized) return;
+    if (!_voiceInputEnabled || !isInitialized) return;
 
     try {
-      _hasError = false;
-      _errorMessage = '';
-      _isListening = true;
-      notifyListeners();
-
-      final success = await _voiceService.startListening(
-        onResult: (result) {
-          _lastRecognizedText = result;
-          _isListening = false;
-          notifyListeners();
-          onResult(result);
-        },
-        onPartialResult: onPartialResult,
-        onError: (error) {
-          _setError(error);
-          _isListening = false;
-        },
-        listenFor: listenFor,
+      await _voiceService.startListening(
+        language: language ?? _recognitionLanguage,
+        timeout: timeout,
       );
-
-      if (!success) {
-        _setError('ไม่สามารถเริ่มการฟังได้');
-        _isListening = false;
-        notifyListeners();
-      }
     } catch (e) {
-      _setError('เกิดข้อผิดพลาดในการเริ่มการฟัง: $e');
-      _isListening = false;
+      _onSpeechError?.call('เกิดข้อผิดพลาดในการฟัง: ${e.toString()}');
     }
   }
 
+  /// Stop listening
   Future<void> stopListening() async {
-    try {
-      await _voiceService.stopListening();
-      _isListening = false;
-      notifyListeners();
-    } catch (e) {
-      _setError('เกิดข้อผิดพลาดในการหยุดการฟัง: $e');
+    await _voiceService.stopListening();
+  }
+
+  /// Toggle listening
+  Future<void> toggleListening() async {
+    if (isListening) {
+      await stopListening();
+    } else {
+      await startListening();
     }
   }
 
-  Future<void> cancelListening() async {
+  /// Speak text
+  Future<void> speak(String text, {
+    String? language,
+    double? rate,
+    double? pitch,
+    double? volume,
+  }) async {
+    if (!_voiceOutputEnabled || !isInitialized) return;
+
     try {
-      await _voiceService.cancelListening();
-      _isListening = false;
-      notifyListeners();
+      await _voiceService.speak(
+        text,
+        language: language,
+        rate: rate,
+        pitch: pitch,
+        volume: volume,
+      );
     } catch (e) {
-      _setError('เกิดข้อผิดพลาดในการยกเลิกการฟัง: $e');
+      print('Error speaking: $e');
     }
   }
 
-  // Settings methods
+  /// Stop speaking
+  Future<void> stopSpeaking() async {
+    await _voiceService.stopSpeaking();
+  }
+
+  /// Quick speak for bot responses
+  Future<void> speakBotResponse(String text) async {
+    if (!_voiceOutputEnabled || text.trim().isEmpty) return;
+
+    // Use user's preferred language and settings
+    await speak(
+      text,
+      language: _currentUser?.preferences.voiceLanguage ?? 'th-TH',
+      rate: _currentUser?.preferences.voiceSpeed ?? 1.0,
+    );
+  }
+
+  /// Settings methods
+  Future<void> setVoiceInputEnabled(bool enabled) async {
+    _voiceInputEnabled = enabled;
+
+    if (!enabled && isListening) {
+      await stopListening();
+    }
+
+    await _updateUserPreference('enableVoiceInput', enabled);
+    notifyListeners();
+  }
+
+  Future<void> setVoiceOutputEnabled(bool enabled) async {
+    _voiceOutputEnabled = enabled;
+
+    if (!enabled && isSpeaking) {
+      await stopSpeaking();
+    }
+
+    await _updateUserPreference('enableVoiceOutput', enabled);
+    notifyListeners();
+  }
+
+  Future<void> setAutoListen(bool enabled) async {
+    _autoListen = enabled;
+    await _updateUserPreference('autoPlayVoice', enabled);
+    notifyListeners();
+  }
+
+  Future<void> setContinuousListening(bool enabled) async {
+    _continuousListening = enabled;
+
+    if (!enabled && isListening) {
+      await stopListening();
+    }
+
+    notifyListeners();
+  }
+
+  Future<void> setRecognitionLanguage(VoiceRecognitionLanguage language) async {
+    _recognitionLanguage = language;
+    await _voiceService.setRecognitionLanguage(language);
+
+    // Update user preference
+    final langCode = language == VoiceRecognitionLanguage.english ? 'en-US' : 'th-TH';
+    await _updateUserPreference('voiceLanguage', langCode);
+
+    notifyListeners();
+  }
+
   Future<void> setSpeechRate(double rate) async {
-    _speechRate = rate.clamp(0.0, 1.0);
-    await _voiceService.setSpeechRate(_speechRate);
+    await _voiceService.setSpeechRate(rate);
+    await _updateUserPreference('voiceSpeed', rate);
     notifyListeners();
   }
 
-  Future<void> setVolume(double vol) async {
-    _volume = vol.clamp(0.0, 1.0);
-    await _voiceService.setVolume(_volume);
+  Future<void> setPitch(double pitch) async {
+    await _voiceService.setPitch(pitch);
     notifyListeners();
   }
 
-  Future<void> setPitch(double pitchValue) async {
-    _pitch = pitchValue.clamp(0.5, 2.0);
-    await _voiceService.setPitch(_pitch);
+  Future<void> setVolume(double volume) async {
+    await _voiceService.setVolume(volume);
     notifyListeners();
   }
 
-  Future<void> setLanguage(String lang) async {
-    _language = lang;
-    await _voiceService.setLanguage(_language);
+  Future<void> setTTSLanguage(String language) async {
+    await _voiceService.setTTSLanguage(language);
+    await _updateUserPreference('voiceLanguage', language);
     notifyListeners();
   }
 
-  // Utility methods for app-specific use cases
-  Future<void> speakWelcomeMessage() async {
-    await speak('สวัสดีครับ ยินดีต้อนรับสู่ Linux Learning Chatbot');
-  }
+  /// Update user preference
+  Future<void> _updateUserPreference(String key, dynamic value) async {
+    if (_currentUser == null) return;
 
-  Future<void> speakCommandExplanation(String command, String explanation) async {
-    await speak('คำสั่ง $command ใช้สำหรับ $explanation');
-  }
-
-  Future<void> speakQuizQuestion(String question, List<String> options) async {
-    final optionsText = options.asMap().entries
-        .map((entry) => '${entry.key + 1}. ${entry.value}')
-        .join(', ');
-    await speak('$question ตัวเลือกคือ: $optionsText');
-  }
-
-  Future<void> speakQuizResult(bool isCorrect, String explanation) async {
-    final resultText = isCorrect ? 'ถูกต้อง!' : 'ไม่ถูกต้อง';
-    await speak('$resultText $explanation');
-  }
-
-  Future<void> speakAchievementUnlocked(String achievementName) async {
-    await speak('ยินดีด้วย! คุณได้รับความสำเร็จใหม่: $achievementName');
-  }
-
-  Future<void> speakLevelUp(int newLevel) async {
-    await speak('ยินดีด้วย! คุณเลื่อนระดับเป็นระดับ $newLevel แล้ว');
-  }
-
-  Future<void> speakErrorMessage(String error) async {
-    await speak('เกิดข้อผิดพลาด: $error');
-  }
-
-  Future<void> speakTerminalOutput(String output) async {
-    // Clean up terminal output for better speech
-    final cleanOutput = output
-        .replaceAll(RegExp(r'\x1B\[[0-9;]*[mK]'), '') // Remove ANSI codes
-        .replaceAll('\n', '. ')
-        .trim();
-
-    if (cleanOutput.isNotEmpty && cleanOutput.length < 500) {
-      await speak('ผลลัพธ์: $cleanOutput');
-    } else {
-      await speak('คำสั่งทำงานเสร็จสิ้นแล้ว');
-    }
-  }
-
-  // Voice command recognition for specific app features
-  Future<void> startCommandListening() async {
-    await startListening(
-      onResult: (result) {
-        _handleVoiceCommand(result.toLowerCase());
-      },
-      listenFor: const Duration(seconds: 10),
-    );
-  }
-
-  void _handleVoiceCommand(String command) {
-    // Handle voice commands for navigation and app control
-    if (command.contains('ช่วยเหลือ') || command.contains('help')) {
-      speak('คุณสามารถพูดคำสั่งต่างๆ เช่น "อธิบายคำสั่ง ls" หรือ "เริ่มทดสอบ"');
-    } else if (command.contains('อธิบาย') && command.contains('คำสั่ง')) {
-      // Extract command name and explain
-      final words = command.split(' ');
-      final commandIndex = words.indexOf('คำสั่ง');
-      if (commandIndex != -1 && commandIndex < words.length - 1) {
-        final linuxCommand = words[commandIndex + 1];
-        // This would integrate with the command explanation system
-        speak('กำลังค้นหาข้อมูลเกี่ยวกับคำสั่ง $linuxCommand');
-      }
-    } else if (command.contains('ทดสอบ') || command.contains('quiz')) {
-      speak('กำลังเริ่มแบบทดสอบ');
-    } else if (command.contains('หยุด') || command.contains('stop')) {
-      stopSpeaking();
-    } else {
-      speak('ขออภัย ฉันไม่เข้าใจคำสั่งนี้ ลองพูด "ช่วยเหลือ" เพื่อดูคำสั่งที่รองรับ');
-    }
-  }
-
-  // Check permissions
-  Future<bool> checkMicrophonePermission() async {
-    return await _voiceService.checkMicrophonePermission();
-  }
-
-  Future<bool> requestMicrophonePermission() async {
-    final granted = await _voiceService.requestMicrophonePermission();
-    if (!granted) {
-      _setError('จำเป็นต้องได้รับอนุญาตใช้ไมโครโฟนเพื่อใช้งานฟีเจอร์เสียง');
-    }
-    return granted;
-  }
-
-  // Get available options
-  Future<List<Map<String, String>>> getAvailableVoices() async {
     try {
-      return await _voiceService.getAvailableVoices();
+      // This would typically update through AuthProvider
+      // For now, just update locally
+      print('Updating user preference: $key = $value');
     } catch (e) {
-      _setError('ไม่สามารถโหลดรายการเสียงได้: $e');
-      return [];
+      print('Error updating user preference: $e');
     }
   }
 
-  // Test functions
-  Future<void> testTts() async {
-    await speak('ทดสอบการพูด Text-to-Speech ภาษาไทย');
-  }
-
-  Future<void> testStt() async {
-    await startListening(
-      onResult: (result) {
-        speak('คุณพูดว่า: $result');
-      },
-      listenFor: const Duration(seconds: 5),
-    );
-  }
-
-  // Helper methods
-  void _updateSpeakingState() {
-    // Periodically check if TTS is still speaking
-    Future.delayed(const Duration(milliseconds: 500), () {
-      if (_voiceService.isSpeaking != _isSpeaking) {
-        _isSpeaking = _voiceService.isSpeaking;
-        notifyListeners();
-
-        if (_isSpeaking) {
-          _updateSpeakingState(); // Continue checking
-        }
+  /// Restart listening with delay (for continuous mode)
+  void _restartListeningDelayed() {
+    Timer(const Duration(seconds: 1), () {
+      if (_continuousListening && _voiceInputEnabled && !isListening) {
+        startListening();
       }
     });
   }
 
-  void _setError(String error) {
-    _hasError = true;
-    _errorMessage = error;
-    _isSpeaking = false;
-    _isListening = false;
-    notifyListeners();
-    debugPrint('Voice Provider Error: $error');
+  /// Permission handling
+  Future<bool> checkMicrophonePermission() async {
+    return await _voiceService.checkMicrophonePermission();
   }
 
-  // Clear error
-  void clearError() {
-    _hasError = false;
-    _errorMessage = '';
-    notifyListeners();
+  /// Get available languages
+  Future<List<dynamic>> getAvailableLanguages() async {
+    return await _voiceService.getAvailableLanguages();
   }
 
-  // Reset state
-  void reset() {
-    _isSpeaking = false;
-    _isListening = false;
-    _lastRecognizedText = '';
-    _lastSpokenText = '';
-    _hasError = false;
-    _errorMessage = '';
-    notifyListeners();
+  Future<List<stt.LocaleName>> getAvailableLocales() async {
+    return await _voiceService.getAvailableLocales();
   }
 
-  @override
-  void dispose() {
-    _voiceService.dispose();
-    super.dispose();
+  /// Voice command processing
+  VoiceCommandResult processVoiceCommand(String spokenText) {
+    return VoiceCommandProcessor.processCommand(spokenText);
   }
-}
+
+  /// Utility methods
+  String getStateDisplayText() {
+    return _voiceService.getStateDisplayText();
+  }
+
+  String getLanguageDisplayText() {
+    return _voiceService.getLanguageDisplayText(_recognitionLanguage);
+  }
+
+  /// Voice feedback for UI interactions
+  Future<void> playSuccessSound() async {
+    await speak('สำเร็จ', rate: 1.2, pitch: 1.2);
+  }
+
+  Future<void> playErrorSound() async {
+    await speak('ผิดพลาด', rate: 0.8, pitch: 0.8);
+  }

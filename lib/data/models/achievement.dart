@@ -4,7 +4,27 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 part 'achievement.g.dart';
 
-@HiveType(typeId: 3)
+enum AchievementType {
+  streak,
+  commandsLearned,
+  quizCompleted,
+  timeSpent,
+  perfectScore,
+  firstTime,
+  milestone,
+  challenge,
+  consistency,
+  mastery
+}
+
+enum AchievementRarity {
+  common,
+  rare,
+  epic,
+  legendary
+}
+
+@HiveType(typeId: 10)
 class Achievement extends Equatable {
   @HiveField(0)
   final String id;
@@ -16,77 +36,69 @@ class Achievement extends Equatable {
   final String description;
 
   @HiveField(3)
-  final String iconPath;
+  final String icon;
 
   @HiveField(4)
-  final String category;
+  final AchievementType type;
 
   @HiveField(5)
-  final String difficulty;
+  final AchievementRarity rarity;
 
   @HiveField(6)
-  final int xpReward;
+  final int points;
 
   @HiveField(7)
-  final DateTime? unlockedAt;
+  final Map<String, dynamic> requirements;
 
   @HiveField(8)
   final bool isUnlocked;
 
   @HiveField(9)
-  final double progress;
+  final DateTime? unlockedAt;
 
   @HiveField(10)
-  final double maxProgress;
+  final double progress;
 
   @HiveField(11)
-  final Map<String, dynamic> requirements;
+  final String? category;
 
   @HiveField(12)
-  final List<String> prerequisites;
+  final List<String>? prerequisites;
 
   @HiveField(13)
-  final bool isSecret;
+  final bool isHidden;
 
   @HiveField(14)
-  final String badgeColor;
-
-  @HiveField(15)
-  final int rarity;
-
-  @HiveField(16)
-  final List<AchievementStep> steps;
-
-  @HiveField(17)
-  final Map<String, dynamic> metadata;
-
-  @HiveField(18)
   final DateTime createdAt;
 
-  @HiveField(19)
-  final bool isActive;
+  @HiveField(15)
+  final Map<String, dynamic>? metadata;
+
+  @HiveField(16)
+  final String? badgeUrl;
+
+  @HiveField(17)
+  final String? celebrationMessage;
 
   const Achievement({
     required this.id,
     required this.title,
     required this.description,
-    required this.iconPath,
-    this.category = 'general',
-    this.difficulty = 'easy',
-    this.xpReward = 0,
-    this.unlockedAt,
+    required this.icon,
+    required this.type,
+    required this.rarity,
+    required this.points,
+    required this.requirements,
     this.isUnlocked = false,
+    this.unlockedAt,
     this.progress = 0.0,
-    this.maxProgress = 1.0,
-    this.requirements = const {},
-    this.prerequisites = const [],
-    this.isSecret = false,
-    this.badgeColor = 'bronze',
-    this.rarity = 1,
-    this.steps = const [],
-    this.metadata = const {},
+    this.category,
+    this.prerequisites,
+    this.isHidden = false,
     required this.createdAt,
-    this.isActive = true,
+    this.metadata,
+    this.badgeUrl,
+    this.celebrationMessage,
   });
 
   // Factory constructor from Map (Firebase)
@@ -95,104 +107,57 @@ class Achievement extends Equatable {
       id: map['id'] ?? '',
       title: map['title'] ?? '',
       description: map['description'] ?? '',
-      iconPath: map['iconPath'] ?? '',
-      category: map['category'] ?? 'general',
-      difficulty: map['difficulty'] ?? 'easy',
-      xpReward: map['xpReward'] ?? 0,
-      unlockedAt: (map['unlockedAt'] as Timestamp?)?.toDate(),
-      isUnlocked: map['isUnlocked'] ?? false,
-      progress: (map['progress'] ?? 0.0).toDouble(),
-      maxProgress: (map['maxProgress'] ?? 1.0).toDouble(),
+      icon: map['icon'] ?? '🏆',
+      type: AchievementType.values.firstWhere(
+            (e) => e.toString() == 'AchievementType.${map['type']}',
+        orElse: () => AchievementType.milestone,
+      ),
+      rarity: AchievementRarity.values.firstWhere(
+            (e) => e.toString() == 'AchievementRarity.${map['rarity']}',
+        orElse: () => AchievementRarity.common,
+      ),
+      points: map['points'] ?? 0,
       requirements: Map<String, dynamic>.from(map['requirements'] ?? {}),
-      prerequisites: List<String>.from(map['prerequisites'] ?? []),
-      isSecret: map['isSecret'] ?? false,
-      badgeColor: map['badgeColor'] ?? 'bronze',
-      rarity: map['rarity'] ?? 1,
-      steps: (map['steps'] as List<dynamic>?)
-          ?.map((e) => AchievementStep.fromMap(e as Map<String, dynamic>))
-          .toList() ?? [],
-      metadata: Map<String, dynamic>.from(map['metadata'] ?? {}),
+      isUnlocked: map['isUnlocked'] ?? false,
+      unlockedAt: map['unlockedAt'] != null
+          ? (map['unlockedAt'] as Timestamp).toDate()
+          : null,
+      progress: (map['progress'] ?? 0.0).toDouble(),
+      category: map['category'],
+      prerequisites: map['prerequisites'] != null
+          ? List<String>.from(map['prerequisites'])
+          : null,
+      isHidden: map['isHidden'] ?? false,
       createdAt: (map['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
-      isActive: map['isActive'] ?? true,
+      metadata: map['metadata'] != null
+          ? Map<String, dynamic>.from(map['metadata'])
+          : null,
+      badgeUrl: map['badgeUrl'],
+      celebrationMessage: map['celebrationMessage'],
     );
   }
 
-  // Convert to Map for Firebase
+  // Convert to Map (Firebase)
   Map<String, dynamic> toMap() {
     return {
       'id': id,
       'title': title,
       'description': description,
-      'iconPath': iconPath,
-      'category': category,
-      'difficulty': difficulty,
-      'xpReward': xpReward,
+      'icon': icon,
+      'type': type.toString().split('.').last,
+      'rarity': rarity.toString().split('.').last,
+      'points': points,
+      'requirements': requirements,
+      'isUnlocked': isUnlocked,
       'unlockedAt': unlockedAt != null ? Timestamp.fromDate(unlockedAt!) : null,
-      'isUnlocked': isUnlocked,
       'progress': progress,
-      'maxProgress': maxProgress,
-      'requirements': requirements,
-      'prerequisites': prerequisites,
-      'isSecret': isSecret,
-      'badgeColor': badgeColor,
-      'rarity': rarity,
-      'steps': steps.map((e) => e.toMap()).toList(),
-      'metadata': metadata,
-      'createdAt': Timestamp.fromDate(createdAt),
-      'isActive': isActive,
-    };
-  }
-
-  // JSON serialization (for local storage)
-  factory Achievement.fromJson(Map<String, dynamic> json) {
-    return Achievement(
-      id: json['id'] ?? '',
-      title: json['title'] ?? '',
-      description: json['description'] ?? '',
-      iconPath: json['iconPath'] ?? '',
-      category: json['category'] ?? 'general',
-      difficulty: json['difficulty'] ?? 'easy',
-      xpReward: json['xpReward'] ?? 0,
-      unlockedAt: json['unlockedAt'] != null ? DateTime.parse(json['unlockedAt']) : null,
-      isUnlocked: json['isUnlocked'] ?? false,
-      progress: (json['progress'] ?? 0.0).toDouble(),
-      maxProgress: (json['maxProgress'] ?? 1.0).toDouble(),
-      requirements: Map<String, dynamic>.from(json['requirements'] ?? {}),
-      prerequisites: List<String>.from(json['prerequisites'] ?? []),
-      isSecret: json['isSecret'] ?? false,
-      badgeColor: json['badgeColor'] ?? 'bronze',
-      rarity: json['rarity'] ?? 1,
-      steps: (json['steps'] as List<dynamic>?)
-          ?.map((e) => AchievementStep.fromJson(e as Map<String, dynamic>))
-          .toList() ?? [],
-      metadata: Map<String, dynamic>.from(json['metadata'] ?? {}),
-      createdAt: DateTime.parse(json['createdAt']),
-      isActive: json['isActive'] ?? true,
-    );
-  }
-
-  Map<String, dynamic> toJson() {
-    return {
-      'id': id,
-      'title': title,
-      'description': description,
-      'iconPath': iconPath,
       'category': category,
-      'difficulty': difficulty,
-      'xpReward': xpReward,
-      'unlockedAt': unlockedAt?.toIso8601String(),
-      'isUnlocked': isUnlocked,
-      'progress': progress,
-      'maxProgress': maxProgress,
-      'requirements': requirements,
       'prerequisites': prerequisites,
-      'isSecret': isSecret,
-      'badgeColor': badgeColor,
-      'rarity': rarity,
-      'steps': steps.map((e) => e.toJson()).toList(),
+      'isHidden': isHidden,
+      'createdAt': Timestamp.fromDate(createdAt),
       'metadata': metadata,
-      'createdAt': createdAt.toIso8601String(),
-      'isActive': isActive,
+      'badgeUrl': badgeUrl,
+      'celebrationMessage': celebrationMessage,
     };
   }
 
@@ -201,212 +166,166 @@ class Achievement extends Equatable {
     String? id,
     String? title,
     String? description,
-    String? iconPath,
-    String? category,
-    String? difficulty,
-    int? xpReward,
-    DateTime? unlockedAt,
-    bool? isUnlocked,
-    double? progress,
-    double? maxProgress,
+    String? icon,
+    AchievementType? type,
+    AchievementRarity? rarity,
+    int? points,
     Map<String, dynamic>? requirements,
+    bool? isUnlocked,
+    DateTime? unlockedAt,
+    double? progress,
+    String? category,
     List<String>? prerequisites,
-    bool? isSecret,
-    String? badgeColor,
-    int? rarity,
-    List<AchievementStep>? steps,
-    Map<String, dynamic>? metadata,
+    bool? isHidden,
     DateTime? createdAt,
-    bool? isActive,
+    Map<String, dynamic>? metadata,
+    String? badgeUrl,
+    String? celebrationMessage,
   }) {
     return Achievement(
       id: id ?? this.id,
       title: title ?? this.title,
       description: description ?? this.description,
-      iconPath: iconPath ?? this.iconPath,
-      category: category ?? this.category,
-      difficulty: difficulty ?? this.difficulty,
-      xpReward: xpReward ?? this.xpReward,
-      unlockedAt: unlockedAt ?? this.unlockedAt,
-      isUnlocked: isUnlocked ?? this.isUnlocked,
-      progress: progress ?? this.progress,
-      maxProgress: maxProgress ?? this.maxProgress,
-      requirements: requirements ?? this.requirements,
-      prerequisites: prerequisites ?? this.prerequisites,
-      isSecret: isSecret ?? this.isSecret,
-      badgeColor: badgeColor ?? this.badgeColor,
+      icon: icon ?? this.icon,
+      type: type ?? this.type,
       rarity: rarity ?? this.rarity,
-      steps: steps ?? this.steps,
-      metadata: metadata ?? this.metadata,
+      points: points ?? this.points,
+      requirements: requirements ?? this.requirements,
+      isUnlocked: isUnlocked ?? this.isUnlocked,
+      unlockedAt: unlockedAt ?? this.unlockedAt,
+      progress: progress ?? this.progress,
+      category: category ?? this.category,
+      prerequisites: prerequisites ?? this.prerequisites,
+      isHidden: isHidden ?? this.isHidden,
       createdAt: createdAt ?? this.createdAt,
-      isActive: isActive ?? this.isActive,
+      metadata: metadata ?? this.metadata,
+      badgeUrl: badgeUrl ?? this.badgeUrl,
+      celebrationMessage: celebrationMessage ?? this.celebrationMessage,
     );
   }
 
   // Helper methods
-  String get categoryDisplayName {
-    switch (category) {
-      case 'learning':
-        return 'การเรียนรู้';
-      case 'practice':
-        return 'การฝึกฝน';
-      case 'terminal':
-        return 'เทอร์มินัล';
-      case 'social':
-        return 'สังคม';
-      case 'streak':
+  String get typeDisplayText {
+    switch (type) {
+      case AchievementType.streak:
         return 'ความต่อเนื่อง';
-      case 'mastery':
+      case AchievementType.commandsLearned:
+        return 'คำสั่งที่เรียนรู้';
+      case AchievementType.quizCompleted:
+        return 'แบบทดสอบ';
+      case AchievementType.timeSpent:
+        return 'เวลาเรียนรู้';
+      case AchievementType.perfectScore:
+        return 'คะแนนเต็ม';
+      case AchievementType.firstTime:
+        return 'ครั้งแรก';
+      case AchievementType.milestone:
+        return 'เป้าหมาย';
+      case AchievementType.challenge:
+        return 'ความท้าทาย';
+      case AchievementType.consistency:
+        return 'ความสม่ำเสมอ';
+      case AchievementType.mastery:
         return 'ความเชี่ยวชาญ';
-      case 'special':
-        return 'พิเศษ';
-      default:
-        return 'ทั่วไป';
     }
   }
 
-  String get difficultyDisplayName {
-    switch (difficulty) {
-      case 'easy':
-        return 'ง่าย';
-      case 'medium':
-        return 'ปานกลาง';
-      case 'hard':
-        return 'ยาก';
-      case 'legendary':
-        return 'ตำนาน';
-      default:
-        return 'ไม่ระบุ';
-    }
-  }
-
-  String get rarityDisplayName {
+  String get rarityDisplayText {
     switch (rarity) {
-      case 1:
+      case AchievementRarity.common:
         return 'ธรรมดา';
-      case 2:
+      case AchievementRarity.rare:
         return 'หายาก';
-      case 3:
-        return 'หายากมาก';
-      case 4:
+      case AchievementRarity.epic:
+        return 'ยอดเยี่ยม';
+      case AchievementRarity.legendary:
         return 'ตำนาน';
-      case 5:
-        return 'เทพ';
-      default:
-        return 'ธรรมดา';
     }
   }
 
-  String get badgeColorDisplayName {
-    switch (badgeColor) {
-      case 'bronze':
-        return 'ทองแดง';
-      case 'silver':
-        return 'เงิน';
-      case 'gold':
-        return 'ทอง';
-      case 'diamond':
-        return 'เพชร';
-      default:
-        return 'ทองแดง';
-    }
-  }
-
-  // Calculate progress percentage
-  double get progressPercentage {
-    if (maxProgress == 0) return 0.0;
-    return (progress / maxProgress).clamp(0.0, 1.0);
-  }
-
-  // Get progress display text
-  String get progressDisplay {
-    if (isUnlocked) return 'ปลดล็อกแล้ว';
-    if (maxProgress == 1.0) {
-      return '${(progressPercentage * 100).toInt()}%';
-    }
-    return '${progress.toInt()}/${maxProgress.toInt()}';
-  }
-
-  // Check if achievement can be unlocked
-  bool get canUnlock {
-    return !isUnlocked && progressPercentage >= 1.0;
-  }
-
-  // Get completion status
-  String get statusDisplay {
-    if (isUnlocked) return 'ปลดล็อกแล้ว';
-    if (progress > 0) return 'กำลังดำเนินการ';
-    return 'ยังไม่เริ่ม';
-  }
-
-  // Get rarity color
   String get rarityColor {
     switch (rarity) {
-      case 1:
-        return '#8E8E93'; // Gray
-      case 2:
-        return '#007AFF'; // Blue
-      case 3:
-        return '#AF52DE'; // Purple
-      case 4:
-        return '#FF9500'; // Orange
-      case 5:
-        return '#FF3B30'; // Red
-      default:
-        return '#8E8E93';
+      case AchievementRarity.common:
+        return '#9E9E9E'; // Gray
+      case AchievementRarity.rare:
+        return '#2196F3'; // Blue
+      case AchievementRarity.epic:
+        return '#9C27B0'; // Purple
+      case AchievementRarity.legendary:
+        return '#FF9800'; // Orange
     }
   }
 
-  // Get achievement icon
-  String get icon {
-    if (isSecret && !isUnlocked) return '❓';
+  bool get isProgressBased => progress < 1.0 && !isUnlocked;
+  bool get canBeUnlocked => progress >= 1.0 && !isUnlocked;
+  bool get hasPrerequisites => prerequisites != null && prerequisites!.isNotEmpty;
 
-    switch (category) {
-      case 'learning':
-        return '📚';
-      case 'practice':
-        return '💪';
-      case 'terminal':
-        return '⚡';
-      case 'social':
-        return '👥';
-      case 'streak':
-        return '🔥';
-      case 'mastery':
-        return '👑';
-      case 'special':
-        return '⭐';
-      default:
-        return '🏆';
+  String get progressText {
+    if (isUnlocked) return 'ปลดล็อกแล้ว';
+    if (progress >= 1.0) return 'พร้อมรับรางวัล';
+    return '${(progress * 100).toInt()}% สำเร็จ';
+  }
+
+  double get progressPercentage => (progress * 100).clamp(0.0, 100.0);
+
+  String get formattedUnlockedDate {
+    if (unlockedAt == null) return '';
+    final now = DateTime.now();
+    final difference = now.difference(unlockedAt!);
+
+    if (difference.inDays == 0) {
+      return 'วันนี้';
+    } else if (difference.inDays == 1) {
+      return 'เมื่อวาน';
+    } else if (difference.inDays < 7) {
+      return '${difference.inDays} วันที่แล้ว';
+    } else if (difference.inDays < 30) {
+      final weeks = (difference.inDays / 7).floor();
+      return '$weeks สัปดาห์ที่แล้ว';
+    } else {
+      final months = (difference.inDays / 30).floor();
+      return '$months เดือนที่แล้ว';
     }
   }
 
-  // Check if user meets prerequisites
-  bool hasMetPrerequisites(List<String> unlockedAchievements) {
-    return prerequisites.every((prereq) => unlockedAchievements.contains(prereq));
+  // Check if achievement requirements are met
+  bool checkRequirements(Map<String, dynamic> userStats) {
+    for (final requirement in requirements.entries) {
+      final key = requirement.key;
+      final requiredValue = requirement.value;
+      final userValue = userStats[key] ?? 0;
+
+      if (requiredValue is int && userValue < requiredValue) {
+        return false;
+      } else if (requiredValue is double && userValue < requiredValue) {
+        return false;
+      }
+    }
+    return true;
   }
 
-  // Get steps progress
-  double get stepsProgress {
-    if (steps.isEmpty) return progressPercentage;
-    final completedSteps = steps.where((step) => step.isCompleted).length;
-    return completedSteps / steps.length;
-  }
+  // Calculate progress based on user stats
+  double calculateProgress(Map<String, dynamic> userStats) {
+    if (requirements.isEmpty) return isUnlocked ? 1.0 : 0.0;
 
-  // Get next uncompleted step
-  AchievementStep? get nextStep {
-    return steps.firstWhere(
-          (step) => !step.isCompleted,
-      orElse: () => steps.isNotEmpty ? steps.last : const AchievementStep(
-        id: '',
-        title: '',
-        description: '',
-        requirement: '',
-        targetValue: 0,
-        currentValue: 0,
-        isCompleted: true,
-      ),
-    );
+    double totalProgress = 0.0;
+    int requirementCount = 0;
+
+    for (final requirement in requirements.entries) {
+      final key = requirement.key;
+      final requiredValue = requirement.value;
+      final userValue = userStats[key] ?? 0;
+
+      if (requiredValue is int) {
+        totalProgress += (userValue / requiredValue).clamp(0.0, 1.0);
+      } else if (requiredValue is double) {
+        totalProgress += (userValue / requiredValue).clamp(0.0, 1.0);
+      }
+
+      requirementCount++;
+    }
+
+    return requirementCount > 0 ? totalProgress / requirementCount : 0.0;
   }
 
   @override
@@ -414,169 +333,124 @@ class Achievement extends Equatable {
     id,
     title,
     description,
-    iconPath,
-    category,
-    difficulty,
-    xpReward,
-    unlockedAt,
-    isUnlocked,
-    progress,
-    maxProgress,
-    requirements,
-    prerequisites,
-    isSecret,
-    badgeColor,
+    icon,
+    type,
     rarity,
-    steps,
-    metadata,
+    points,
+    requirements,
+    isUnlocked,
+    unlockedAt,
+    progress,
+    category,
+    prerequisites,
+    isHidden,
     createdAt,
-    isActive,
+    metadata,
+    badgeUrl,
+    celebrationMessage,
   ];
+
+  @override
+  String toString() {
+    return 'Achievement(id: $id, title: $title, isUnlocked: $isUnlocked, progress: $progress)';
+  }
 }
 
-@HiveType(typeId: 8)
-class AchievementStep extends Equatable {
-  @HiveField(0)
-  final String id;
+// Predefined achievements factory
+class AchievementFactory {
+  static List<Achievement> createDefaultAchievements() {
+    return [
+      // First Time Achievements
+      Achievement(
+        id: 'first_command',
+        title: 'คำสั่งแรก',
+        description: 'เรียนรู้คำสั่ง Linux คำสั่งแรกของคุณ',
+        icon: '🚀',
+        type: AchievementType.firstTime,
+        rarity: AchievementRarity.common,
+        points: 10,
+        requirements: {'commandsLearned': 1},
+        createdAt: DateTime.now(),
+        celebrationMessage: 'ยินดีด้วย! คุณได้เรียนรู้คำสั่ง Linux คำสั่งแรกแล้ว',
+      ),
 
-  @HiveField(1)
-  final String title;
+      // Commands Learned Achievements
+      Achievement(
+        id: 'novice_learner',
+        title: 'ผู้เรียนมือใหม่',
+        description: 'เรียนรู้คำสั่ง Linux 10 คำสั่ง',
+        icon: '📚',
+        type: AchievementType.commandsLearned,
+        rarity: AchievementRarity.common,
+        points: 50,
+        requirements: {'commandsLearned': 10},
+        createdAt: DateTime.now(),
+      ),
 
-  @HiveField(2)
-  final String description;
+      Achievement(
+        id: 'intermediate_learner',
+        title: 'ผู้เรียนระดับกลาง',
+        description: 'เรียนรู้คำสั่ง Linux 50 คำสั่ง',
+        icon: '🎓',
+        type: AchievementType.commandsLearned,
+        rarity: AchievementRarity.rare,
+        points: 200,
+        requirements: {'commandsLearned': 50},
+        createdAt: DateTime.now(),
+      ),
 
-  @HiveField(3)
-  final String requirement;
+      // Streak Achievements
+      Achievement(
+        id: 'week_streak',
+        title: 'สัปดาห์แห่งการเรียนรู้',
+        description: 'เรียนรู้ต่อเนื่อง 7 วัน',
+        icon: '🔥',
+        type: AchievementType.streak,
+        rarity: AchievementRarity.rare,
+        points: 100,
+        requirements: {'longestStreak': 7},
+        createdAt: DateTime.now(),
+      ),
 
-  @HiveField(4)
-  final double targetValue;
+      // Perfect Score Achievements
+      Achievement(
+        id: 'perfect_quiz',
+        title: 'คะแนนเต็มครั้งแรก',
+        description: 'ได้คะแนนเต็มในแบบทดสอบ',
+        icon: '⭐',
+        type: AchievementType.perfectScore,
+        rarity: AchievementRarity.common,
+        points: 25,
+        requirements: {'perfectScores': 1},
+        createdAt: DateTime.now(),
+      ),
 
-  @HiveField(5)
-  final double currentValue;
+      // Time Spent Achievements
+      Achievement(
+        id: 'dedicated_learner',
+        title: 'ผู้เรียนผู้ทุ่มเท',
+        description: 'ใช้เวลาเรียนรู้รวม 10 ชั่วโมง',
+        icon: '⏰',
+        type: AchievementType.timeSpent,
+        rarity: AchievementRarity.epic,
+        points: 300,
+        requirements: {'totalTimeSpentHours': 10},
+        createdAt: DateTime.now(),
+      ),
 
-  @HiveField(6)
-  final bool isCompleted;
-
-  @HiveField(7)
-  final DateTime? completedAt;
-
-  @HiveField(8)
-  final int order;
-
-  const AchievementStep({
-    required this.id,
-    required this.title,
-    required this.description,
-    required this.requirement,
-    required this.targetValue,
-    this.currentValue = 0.0,
-    this.isCompleted = false,
-    this.completedAt,
-    this.order = 0,
-  });
-
-  factory AchievementStep.fromMap(Map<String, dynamic> map) {
-    return AchievementStep(
-      id: map['id'] ?? '',
-      title: map['title'] ?? '',
-      description: map['description'] ?? '',
-      requirement: map['requirement'] ?? '',
-      targetValue: (map['targetValue'] ?? 0.0).toDouble(),
-      currentValue: (map['currentValue'] ?? 0.0).toDouble(),
-      isCompleted: map['isCompleted'] ?? false,
-      completedAt: (map['completedAt'] as Timestamp?)?.toDate(),
-      order: map['order'] ?? 0,
-    );
+      // Legendary Achievements
+      Achievement(
+        id: 'linux_master',
+        title: 'เซียนลีนุกซ์',
+        description: 'เรียนรู้คำสั่ง Linux ครบ 200 คำสั่ง',
+        icon: '👑',
+        type: AchievementType.mastery,
+        rarity: AchievementRarity.legendary,
+        points: 1000,
+        requirements: {'commandsLearned': 200, 'perfectScores': 50},
+        createdAt: DateTime.now(),
+        celebrationMessage: 'ยอดเยี่ยม! คุณเป็นเซียนลีนุกซ์แล้ว! 🎉',
+      ),
+    ];
   }
-
-  Map<String, dynamic> toMap() {
-    return {
-      'id': id,
-      'title': title,
-      'description': description,
-      'requirement': requirement,
-      'targetValue': targetValue,
-      'currentValue': currentValue,
-      'isCompleted': isCompleted,
-      'completedAt': completedAt != null ? Timestamp.fromDate(completedAt!) : null,
-      'order': order,
-    };
-  }
-
-  factory AchievementStep.fromJson(Map<String, dynamic> json) {
-    return AchievementStep(
-      id: json['id'] ?? '',
-      title: json['title'] ?? '',
-      description: json['description'] ?? '',
-      requirement: json['requirement'] ?? '',
-      targetValue: (json['targetValue'] ?? 0.0).toDouble(),
-      currentValue: (json['currentValue'] ?? 0.0).toDouble(),
-      isCompleted: json['isCompleted'] ?? false,
-      completedAt: json['completedAt'] != null ? DateTime.parse(json['completedAt']) : null,
-      order: json['order'] ?? 0,
-    );
-  }
-
-  Map<String, dynamic> toJson() {
-    return {
-      'id': id,
-      'title': title,
-      'description': description,
-      'requirement': requirement,
-      'targetValue': targetValue,
-      'currentValue': currentValue,
-      'isCompleted': isCompleted,
-      'completedAt': completedAt?.toIso8601String(),
-      'order': order,
-    };
-  }
-
-  AchievementStep copyWith({
-    String? id,
-    String? title,
-    String? description,
-    String? requirement,
-    double? targetValue,
-    double? currentValue,
-    bool? isCompleted,
-    DateTime? completedAt,
-    int? order,
-  }) {
-    return AchievementStep(
-      id: id ?? this.id,
-      title: title ?? this.title,
-      description: description ?? this.description,
-      requirement: requirement ?? this.requirement,
-      targetValue: targetValue ?? this.targetValue,
-      currentValue: currentValue ?? this.currentValue,
-      isCompleted: isCompleted ?? this.isCompleted,
-      completedAt: completedAt ?? this.completedAt,
-      order: order ?? this.order,
-    );
-  }
-
-  double get progressPercentage {
-    if (targetValue == 0) return isCompleted ? 1.0 : 0.0;
-    return (currentValue / targetValue).clamp(0.0, 1.0);
-  }
-
-  String get progressDisplay {
-    if (targetValue == 1.0) {
-      return isCompleted ? 'เสร็จสิ้น' : 'ยังไม่เสร็จ';
-    }
-    return '${currentValue.toInt()}/${targetValue.toInt()}';
-  }
-
-  @override
-  List<Object?> get props => [
-    id,
-    title,
-    description,
-    requirement,
-    targetValue,
-    currentValue,
-    isCompleted,
-    completedAt,
-    order,
-  ];
 }

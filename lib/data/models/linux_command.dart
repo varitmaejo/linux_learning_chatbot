@@ -4,6 +4,26 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 part 'linux_command.g.dart';
 
+enum CommandDifficulty {
+  beginner,
+  intermediate,
+  advanced,
+  expert
+}
+
+enum CommandCategory {
+  fileSystem,
+  textProcessing,
+  systemInfo,
+  network,
+  process,
+  permission,
+  archive,
+  search,
+  ioRedirection,
+  environment
+}
+
 @HiveType(typeId: 4)
 class LinuxCommand extends Equatable {
   @HiveField(0)
@@ -19,16 +39,16 @@ class LinuxCommand extends Equatable {
   final String syntax;
 
   @HiveField(4)
-  final String category;
+  final CommandDifficulty difficulty;
 
   @HiveField(5)
-  final String difficulty;
+  final CommandCategory category;
 
   @HiveField(6)
-  final List<String> examples;
+  final List<CommandExample> examples;
 
   @HiveField(7)
-  final List<CommandOption> options;
+  final List<CommandParameter> parameters;
 
   @HiveField(8)
   final List<String> relatedCommands;
@@ -37,10 +57,10 @@ class LinuxCommand extends Equatable {
   final List<String> tags;
 
   @HiveField(10)
-  final String iconPath;
+  final String? manualUrl;
 
   @HiveField(11)
-  final bool isPopular;
+  final String? videoUrl;
 
   @HiveField(12)
   final int usageCount;
@@ -55,93 +75,103 @@ class LinuxCommand extends Equatable {
   final DateTime updatedAt;
 
   @HiveField(16)
-  final String longDescription;
+  final List<String>? prerequisites;
 
   @HiveField(17)
-  final List<CommandUseCase> useCases;
+  final String? warningMessage;
 
   @HiveField(18)
-  final List<String> prerequisites;
+  final bool isDestructive;
 
   @HiveField(19)
-  final String manualUrl;
+  final Map<String, dynamic>? metadata;
 
   const LinuxCommand({
     required this.id,
     required this.name,
     required this.description,
     required this.syntax,
-    required this.category,
     required this.difficulty,
-    this.examples = const [],
-    this.options = const [],
-    this.relatedCommands = const [],
-    this.tags = const [],
-    this.iconPath = '',
-    this.isPopular = false,
+    required this.category,
+    required this.examples,
+    required this.parameters,
+    required this.relatedCommands,
+    required this.tags,
+    this.manualUrl,
+    this.videoUrl,
     this.usageCount = 0,
     this.averageRating = 0.0,
     required this.createdAt,
     required this.updatedAt,
-    this.longDescription = '',
-    this.useCases = const [],
-    this.prerequisites = const [],
-    this.manualUrl = '',
+    this.prerequisites,
+    this.warningMessage,
+    this.isDestructive = false,
+    this.metadata,
   });
 
-  // Factory constructor from Map (Firebase/JSON)
+  // Factory constructor from Map (Firebase)
   factory LinuxCommand.fromMap(Map<String, dynamic> map) {
     return LinuxCommand(
       id: map['id'] ?? '',
       name: map['name'] ?? '',
       description: map['description'] ?? '',
       syntax: map['syntax'] ?? '',
-      category: map['category'] ?? '',
-      difficulty: map['difficulty'] ?? 'beginner',
-      examples: List<String>.from(map['examples'] ?? []),
-      options: (map['options'] as List<dynamic>?)
-          ?.map((e) => CommandOption.fromMap(e as Map<String, dynamic>))
+      difficulty: CommandDifficulty.values.firstWhere(
+            (e) => e.toString() == 'CommandDifficulty.${map['difficulty']}',
+        orElse: () => CommandDifficulty.beginner,
+      ),
+      category: CommandCategory.values.firstWhere(
+            (e) => e.toString() == 'CommandCategory.${map['category']}',
+        orElse: () => CommandCategory.fileSystem,
+      ),
+      examples: (map['examples'] as List?)
+          ?.map((e) => CommandExample.fromMap(Map<String, dynamic>.from(e)))
+          .toList() ?? [],
+      parameters: (map['parameters'] as List?)
+          ?.map((e) => CommandParameter.fromMap(Map<String, dynamic>.from(e)))
           .toList() ?? [],
       relatedCommands: List<String>.from(map['relatedCommands'] ?? []),
       tags: List<String>.from(map['tags'] ?? []),
-      iconPath: map['iconPath'] ?? '',
-      isPopular: map['isPopular'] ?? false,
+      manualUrl: map['manualUrl'],
+      videoUrl: map['videoUrl'],
       usageCount: map['usageCount'] ?? 0,
       averageRating: (map['averageRating'] ?? 0.0).toDouble(),
       createdAt: (map['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
       updatedAt: (map['updatedAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
-      longDescription: map['longDescription'] ?? '',
-      useCases: (map['useCases'] as List<dynamic>?)
-          ?.map((e) => CommandUseCase.fromMap(e as Map<String, dynamic>))
-          .toList() ?? [],
-      prerequisites: List<String>.from(map['prerequisites'] ?? []),
-      manualUrl: map['manualUrl'] ?? '',
+      prerequisites: map['prerequisites'] != null
+          ? List<String>.from(map['prerequisites'])
+          : null,
+      warningMessage: map['warningMessage'],
+      isDestructive: map['isDestructive'] ?? false,
+      metadata: map['metadata'] != null
+          ? Map<String, dynamic>.from(map['metadata'])
+          : null,
     );
   }
 
-  // Convert to Map for Firebase
+  // Convert to Map (Firebase)
   Map<String, dynamic> toMap() {
     return {
       'id': id,
       'name': name,
       'description': description,
       'syntax': syntax,
-      'category': category,
-      'difficulty': difficulty,
-      'examples': examples,
-      'options': options.map((e) => e.toMap()).toList(),
+      'difficulty': difficulty.toString().split('.').last,
+      'category': category.toString().split('.').last,
+      'examples': examples.map((e) => e.toMap()).toList(),
+      'parameters': parameters.map((e) => e.toMap()).toList(),
       'relatedCommands': relatedCommands,
       'tags': tags,
-      'iconPath': iconPath,
-      'isPopular': isPopular,
+      'manualUrl': manualUrl,
+      'videoUrl': videoUrl,
       'usageCount': usageCount,
       'averageRating': averageRating,
       'createdAt': Timestamp.fromDate(createdAt),
       'updatedAt': Timestamp.fromDate(updatedAt),
-      'longDescription': longDescription,
-      'useCases': useCases.map((e) => e.toMap()).toList(),
       'prerequisites': prerequisites,
-      'manualUrl': manualUrl,
+      'warningMessage': warningMessage,
+      'isDestructive': isDestructive,
+      'metadata': metadata,
     };
   }
 
@@ -151,125 +181,116 @@ class LinuxCommand extends Equatable {
     String? name,
     String? description,
     String? syntax,
-    String? category,
-    String? difficulty,
-    List<String>? examples,
-    List<CommandOption>? options,
+    CommandDifficulty? difficulty,
+    CommandCategory? category,
+    List<CommandExample>? examples,
+    List<CommandParameter>? parameters,
     List<String>? relatedCommands,
     List<String>? tags,
-    String? iconPath,
-    bool? isPopular,
+    String? manualUrl,
+    String? videoUrl,
     int? usageCount,
     double? averageRating,
     DateTime? createdAt,
     DateTime? updatedAt,
-    String? longDescription,
-    List<CommandUseCase>? useCases,
     List<String>? prerequisites,
-    String? manualUrl,
+    String? warningMessage,
+    bool? isDestructive,
+    Map<String, dynamic>? metadata,
   }) {
     return LinuxCommand(
       id: id ?? this.id,
       name: name ?? this.name,
       description: description ?? this.description,
       syntax: syntax ?? this.syntax,
-      category: category ?? this.category,
       difficulty: difficulty ?? this.difficulty,
+      category: category ?? this.category,
       examples: examples ?? this.examples,
-      options: options ?? this.options,
+      parameters: parameters ?? this.parameters,
       relatedCommands: relatedCommands ?? this.relatedCommands,
       tags: tags ?? this.tags,
-      iconPath: iconPath ?? this.iconPath,
-      isPopular: isPopular ?? this.isPopular,
+      manualUrl: manualUrl ?? this.manualUrl,
+      videoUrl: videoUrl ?? this.videoUrl,
       usageCount: usageCount ?? this.usageCount,
       averageRating: averageRating ?? this.averageRating,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
-      longDescription: longDescription ?? this.longDescription,
-      useCases: useCases ?? this.useCases,
       prerequisites: prerequisites ?? this.prerequisites,
-      manualUrl: manualUrl ?? this.manualUrl,
+      warningMessage: warningMessage ?? this.warningMessage,
+      isDestructive: isDestructive ?? this.isDestructive,
+      metadata: metadata ?? this.metadata,
     );
   }
 
   // Helper methods
-  String get categoryDisplayName {
-    switch (category) {
-      case 'file_management':
-        return 'การจัดการไฟล์';
-      case 'system_administration':
-        return 'การจัดการระบบ';
-      case 'networking':
-        return 'เครือข่าย';
-      case 'text_processing':
-        return 'การประมวลผลข้อความ';
-      case 'package_management':
-        return 'การจัดการแพ็กเกจ';
-      case 'security':
-        return 'ความปลอดภัย';
-      case 'shell_scripting':
-        return 'สคริปต์เชลล์';
-      default:
-        return 'ทั่วไป';
-    }
-  }
-
-  String get difficultyDisplayName {
+  String get difficultyDisplayText {
     switch (difficulty) {
-      case 'beginner':
-        return 'ผู้เริ่มต้น';
-      case 'intermediate':
-        return 'ระดับกลาง';
-      case 'advanced':
-        return 'ระดับสูง';
-      case 'expert':
+      case CommandDifficulty.beginner:
+        return 'ง่าย';
+      case CommandDifficulty.intermediate:
+        return 'ปานกลาง';
+      case CommandDifficulty.advanced:
+        return 'ยาก';
+      case CommandDifficulty.expert:
         return 'ผู้เชี่ยวชาญ';
-      default:
-        return 'ไม่ระบุ';
     }
   }
 
-  String get difficultyIcon {
-    switch (difficulty) {
-      case 'beginner':
-        return '🌱';
-      case 'intermediate':
-        return '🌿';
-      case 'advanced':
-        return '🌳';
-      case 'expert':
-        return '🚀';
-      default:
-        return '❓';
+  String get categoryDisplayText {
+    switch (category) {
+      case CommandCategory.fileSystem:
+        return 'ระบบไฟล์';
+      case CommandCategory.textProcessing:
+        return 'ประมวลผลข้อความ';
+      case CommandCategory.systemInfo:
+        return 'ข้อมูลระบบ';
+      case CommandCategory.network:
+        return 'เครือข่าย';
+      case CommandCategory.process:
+        return 'โปรเซส';
+      case CommandCategory.permission:
+        return 'สิทธิ์การเข้าถึง';
+      case CommandCategory.archive:
+        return 'บีบอัดและแตกไฟล์';
+      case CommandCategory.search:
+        return 'ค้นหา';
+      case CommandCategory.ioRedirection:
+        return 'เปลี่ยนทิศทาง I/O';
+      case CommandCategory.environment:
+        return 'สภาพแวดล้อม';
     }
   }
 
   String get categoryIcon {
     switch (category) {
-      case 'file_management':
+      case CommandCategory.fileSystem:
         return '📁';
-      case 'system_administration':
-        return '⚙️';
-      case 'networking':
-        return '🌐';
-      case 'text_processing':
-        return '📝';
-      case 'package_management':
-        return '📦';
-      case 'security':
-        return '🔒';
-      case 'shell_scripting':
-        return '🔧';
-      default:
+      case CommandCategory.textProcessing:
+        return '📄';
+      case CommandCategory.systemInfo:
         return '💻';
+      case CommandCategory.network:
+        return '🌐';
+      case CommandCategory.process:
+        return '⚙️';
+      case CommandCategory.permission:
+        return '🔐';
+      case CommandCategory.archive:
+        return '📦';
+      case CommandCategory.search:
+        return '🔍';
+      case CommandCategory.ioRedirection:
+        return '↗️';
+      case CommandCategory.environment:
+        return '🌿';
     }
   }
 
   bool get hasExamples => examples.isNotEmpty;
-  bool get hasOptions => options.isNotEmpty;
+  bool get hasParameters => parameters.isNotEmpty;
   bool get hasRelatedCommands => relatedCommands.isNotEmpty;
-  bool get hasUseCases => useCases.isNotEmpty;
-  bool get hasPrerequisites => prerequisites.isNotEmpty;
+  bool get hasPrerequisites => prerequisites != null && prerequisites!.isNotEmpty;
+  bool get hasWarning => warningMessage != null && warningMessage!.isNotEmpty;
 
   @override
   List<Object?> get props => [
@@ -277,107 +298,163 @@ class LinuxCommand extends Equatable {
     name,
     description,
     syntax,
-    category,
     difficulty,
+    category,
     examples,
-    options,
+    parameters,
     relatedCommands,
     tags,
-    iconPath,
-    isPopular,
+    manualUrl,
+    videoUrl,
     usageCount,
     averageRating,
     createdAt,
     updatedAt,
-    longDescription,
-    useCases,
     prerequisites,
-    manualUrl,
+    warningMessage,
+    isDestructive,
+    metadata,
   ];
 }
 
 @HiveType(typeId: 5)
-class CommandOption extends Equatable {
+class CommandExample extends Equatable {
   @HiveField(0)
-  final String flag;
+  final String command;
 
   @HiveField(1)
   final String description;
 
   @HiveField(2)
-  final String? example;
+  final String? expectedOutput;
 
   @HiveField(3)
-  final bool isRequired;
+  final String? explanation;
 
-  const CommandOption({
-    required this.flag,
+  @HiveField(4)
+  final bool isInteractive;
+
+  @HiveField(5)
+  final List<String>? prerequisites;
+
+  const CommandExample({
+    required this.command,
     required this.description,
-    this.example,
-    this.isRequired = false,
+    this.expectedOutput,
+    this.explanation,
+    this.isInteractive = false,
+    this.prerequisites,
   });
 
-  factory CommandOption.fromMap(Map<String, dynamic> map) {
-    return CommandOption(
-      flag: map['flag'] ?? '',
+  factory CommandExample.fromMap(Map<String, dynamic> map) {
+    return CommandExample(
+      command: map['command'] ?? '',
       description: map['description'] ?? '',
-      example: map['example'],
-      isRequired: map['isRequired'] ?? false,
+      expectedOutput: map['expectedOutput'],
+      explanation: map['explanation'],
+      isInteractive: map['isInteractive'] ?? false,
+      prerequisites: map['prerequisites'] != null
+          ? List<String>.from(map['prerequisites'])
+          : null,
     );
   }
 
   Map<String, dynamic> toMap() {
     return {
-      'flag': flag,
+      'command': command,
       'description': description,
-      'example': example,
-      'isRequired': isRequired,
+      'expectedOutput': expectedOutput,
+      'explanation': explanation,
+      'isInteractive': isInteractive,
+      'prerequisites': prerequisites,
     };
   }
 
   @override
-  List<Object?> get props => [flag, description, example, isRequired];
+  List<Object?> get props => [
+    command,
+    description,
+    expectedOutput,
+    explanation,
+    isInteractive,
+    prerequisites,
+  ];
 }
 
 @HiveType(typeId: 6)
-class CommandUseCase extends Equatable {
+class CommandParameter extends Equatable {
   @HiveField(0)
-  final String title;
+  final String name;
 
   @HiveField(1)
-  final String description;
+  final String shortForm;
 
   @HiveField(2)
-  final String example;
+  final String longForm;
 
   @HiveField(3)
-  final String expectedOutput;
+  final String description;
 
-  const CommandUseCase({
-    required this.title,
+  @HiveField(4)
+  final bool isRequired;
+
+  @HiveField(5)
+  final String? defaultValue;
+
+  @HiveField(6)
+  final List<String>? validValues;
+
+  @HiveField(7)
+  final String? example;
+
+  const CommandParameter({
+    required this.name,
+    required this.shortForm,
+    required this.longForm,
     required this.description,
-    required this.example,
-    this.expectedOutput = '',
+    this.isRequired = false,
+    this.defaultValue,
+    this.validValues,
+    this.example,
   });
 
-  factory CommandUseCase.fromMap(Map<String, dynamic> map) {
-    return CommandUseCase(
-      title: map['title'] ?? '',
+  factory CommandParameter.fromMap(Map<String, dynamic> map) {
+    return CommandParameter(
+      name: map['name'] ?? '',
+      shortForm: map['shortForm'] ?? '',
+      longForm: map['longForm'] ?? '',
       description: map['description'] ?? '',
-      example: map['example'] ?? '',
-      expectedOutput: map['expectedOutput'] ?? '',
+      isRequired: map['isRequired'] ?? false,
+      defaultValue: map['defaultValue'],
+      validValues: map['validValues'] != null
+          ? List<String>.from(map['validValues'])
+          : null,
+      example: map['example'],
     );
   }
 
   Map<String, dynamic> toMap() {
     return {
-      'title': title,
+      'name': name,
+      'shortForm': shortForm,
+      'longForm': longForm,
       'description': description,
+      'isRequired': isRequired,
+      'defaultValue': defaultValue,
+      'validValues': validValues,
       'example': example,
-      'expectedOutput': expectedOutput,
     };
   }
 
   @override
-  List<Object?> get props => [title, description, example, expectedOutput];
+  List<Object?> get props => [
+    name,
+    shortForm,
+    longForm,
+    description,
+    isRequired,
+    defaultValue,
+    validValues,
+    example,
+  ];
 }

@@ -1,285 +1,425 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/services.dart';
-import 'package:dialogflow_flutter/dialogflow_flutter.dart';
 import 'package:googleapis_auth/auth_io.dart';
+import 'package:googleapis/dialogflow/v2.dart';
 import '../constants/firebase_constants.dart';
 
 class DialogflowService {
   static DialogflowService? _instance;
   static DialogflowService get instance => _instance ??= DialogflowService._();
+
   DialogflowService._();
 
-  AuthClient? _authClient;
+  DialogflowApi? _dialogflowApi;
   String? _projectId;
-  bool _initialized = false;
+  String? _sessionId;
+  bool _isInitialized = false;
 
-  // Initialize Dialogflow
-  Future<void> initialize() async {
-    if (_initialized) return;
+  bool get isInitialized => _isInitialized;
+  String get sessionPath => 'projects/$_projectId/agent/sessions/$_sessionId';
 
-    try {
-      // Load service account credentials
-      final serviceAccountJson = await rootBundle.loadString('assets/credentials/dialogflow_credentials.json');
-      final serviceAccount = ServiceAccountCredentials.fromJson(json.decode(serviceAccountJson));
-
-      _projectId = serviceAccount.projectId;
-
-      // Create authenticated client
-      _authClient = await clientViaServiceAccount(
-          serviceAccount,
-          ['https://www.googleapis.com/auth/cloud-platform']
-      );
-
-      _initialized = true;
-      print('Dialogflow initialized successfully');
-    } catch (e) {
-      print('Error initializing Dialogflow: $e');
-      rethrow;
-    }
-  }
-
-  // Send message to Dialogflow and get response
-  Future<DialogflowResponse> detectIntent({
-    required String message,
-    required String sessionId,
-    String? languageCode = 'th',
+  /// Initialize Dialogflow service
+  Future<void> initialize({
+    String? credentialsPath,
+    String? projectId,
+    String? sessionId,
   }) async {
-    if (!_initialized) {
-      await initialize();
+    /// Initialize Dialogflow service
+    Future<void> initialize({
+      String? credentialsPath,
+      String? projectId,
+      String? sessionId,
+    }) async {
+      try {
+        if (_isInitialized) return;
+
+        // Load credentials from assets
+        final credentialsJson = await rootBundle.loadString(
+            credentialsPath ?? 'assets/credentials/dialogflow_credentials.json'
+        );
+
+        final credentials = ServiceAccountCredentials.fromJson(
+            json.decode(credentialsJson)
+        );
+
+        // Set project ID
+        _projectId = projectId ?? credentials.projectId;
+        _sessionId = sessionId ?? 'flutter-session-${DateTime.now().millisecondsSinceEpoch}';
+
+        // Create authenticated HTTP client
+        final httpClient = await clientViaServiceAccount(
+          credentials,
+          [DialogflowApi.cloudPlatformScope],
+        );
+
+        // Initialize Dialogflow API
+        _dialogflowApi = DialogflowApi(httpClient);
+
+        _isInitialized = true;
+        print('Dialogflow service initialized successfully');
+
+      } catch (e) {
+        print('Error initializing Dialogflow service: $e');
+        rethrow;
+      }
     }
 
-    try {
-      // Create Dialogflow request
-      final authClient = await AuthClient.fromServiceAccount(
-          await rootBundle.loadString('assets/credentials/dialogflow_credentials.json'),
-          ['https://www.googleapis.com/auth/cloud-platform']
-      );
+    /// Detect intent from text
+    Future<DialogflowResponse> detectIntent(String text, {String? languageCode}) async {
+      if (!_isInitialized || _dialogflowApi == null) {
+        throw Exception('Dialogflow service not initialized');
+      }
 
-      final dialogflow = DialogflowV2(authClient, _projectId!);
+      try {
+        final request = DetectIntentRequest();
+        request.queryInput = QueryInput();
+        request.queryInput!.text = TextInput();
+        request.queryInput!.text!.text = text;
+        request.queryInput!.text!.languageCode = languageCode ?? 'th-TH';
 
-      // Detect intent
-      final response = await dialogflow.detectIntent(
-        sessionId: sessionId,
-        queryInput: QueryInput(
-          text: TextInput(
-            text: message,
-            languageCode: languageCode ?? 'th',
-          ),
+        final response = await _dialogflowApi!.projects.agent.sessions.detectIntent(
+          request,
+          sessionPath,
+        );
+
+        return DialogflowResponse.fromDetectIntentResponse(response);
+
+      } catch (e) {
+        print('Error detecting intent: $e');
+        return DialogflowResponse.error('Failed to process request: ${e.toString()}');
+      }
+    }
+
+    /// Generate learning path based on user progress
+    Future<LearningPathResponse> generateLearningPath({
+      required String currentLevel,
+      required List<String> completedCommands,
+    }) async {
+      try {
+        final query = 'แนะนำเส้นทางการเรียนรู้สำหรับระดับ $currentLevel';
+        final response = await detectIntent(query);
+
+        return LearningPathResponse(
+          explanation: response.fulfillmentText,
+          recommendedCommands: _extractCommandsFromResponse(response.fulfillmentText),
+          nextTopic: _extractNextTopicFromResponse(response.fulfillmentText),
+          difficulty: currentLevel,
+        );
+
+      } catch (e) {
+        print('Error generating learning path: $e');
+        return LearningPathResponse(
+          explanation: 'ขออภัย ไม่สามารถสร้างเส้นทางการเรียนรู้ได้ในขณะนี้',
+          recommendedCommands: ['ls', 'cd', 'pwd'],
+          nextTopic: 'พื้นฐานการใช้คำสั่ง',
+          difficulty: currentLevel,
+        );
+      }
+    }
+
+    /// Generate quiz based on topic
+    Future<QuizResponse> generateQuiz({
+      required String topic,
+      required String difficulty,
+      int questionCount = 5,
+    }) async {
+      try {
+        final query = 'สร้างแบบทดสอบเรื่อง $topic ระดับ $difficulty จำนวน $questionCount ข้อ';
+        final response = await detectIntent(query);
+
+        return QuizResponse(
+          topic: topic,
+          difficulty: difficulty,
+          questions: _parseQuizQuestions(response.fulfillmentText),
+          timeLimit: questionCount * 30, // 30 seconds per question
+        );
+
+      } catch (e) {
+        print('Error generating quiz: $e');
+        return QuizResponse.error(topic, difficulty);
+      }
+    }
+
+    /// Explain Linux command
+    Future<CommandExplanationResponse> explainCommand(String commandName) async {
+      try {
+        final query = 'อธิบายคำสั่ง Linux "$commandName" แบบละเอียด';
+        final response = await detectIntent(query);
+
+        return CommandExplanationResponse(
+          command: commandName,
+          explanation: response.fulfillmentText,
+          examples: _extractExamplesFromResponse(response.fulfillmentText),
+          relatedCommands: _extractRelatedCommandsFromResponse(response.fulfillmentText),
+          tips: _extractTipsFromResponse(response.fulfillmentText),
+        );
+
+      } catch (e) {
+        print('Error explaining command: $e');
+        return CommandExplanationResponse.error(commandName);
+      }
+    }
+
+    /// Get contextual help
+    Future<DialogflowResponse> getContextualHelp(String context, String question) async {
+      try {
+        final query = 'ในบริบท $context: $question';
+        return await detectIntent(query);
+      } catch (e) {
+        print('Error getting contextual help: $e');
+        return DialogflowResponse.error('ขออภัย ไม่สามารถให้ความช่วยเหลือได้ในขณะนี้');
+      }
+    }
+
+    /// Validate command syntax
+    Future<ValidationResponse> validateCommand(String command) async {
+      try {
+        final query = 'ตรวจสอบไวยากรณ์คำสั่ง: $command';
+        final response = await detectIntent(query);
+
+        return ValidationResponse(
+          isValid: _isCommandValid(response.fulfillmentText),
+          message: response.fulfillmentText,
+          suggestions: _extractSuggestionsFromResponse(response.fulfillmentText),
+        );
+
+      } catch (e) {
+        print('Error validating command: $e');
+        return ValidationResponse(
+          isValid: false,
+          message: 'ไม่สามารถตรวจสอบคำสั่งได้',
+          suggestions: [],
+        );
+      }
+    }
+
+    // Helper methods for parsing responses
+    List<String> _extractCommandsFromResponse(String response) {
+      final commandPattern = RegExp(r'`([^`]+)`');
+      final matches = commandPattern.allMatches(response);
+      return matches.map((match) => match.group(1) ?? '').toList();
+    }
+
+    String? _extractNextTopicFromResponse(String response) {
+      final topicPattern = RegExp(r'หัวข้อต่อไป[:\s]*([^\n\.]+)');
+      final match = topicPattern.firstMatch(response);
+      return match?.group(1)?.trim();
+    }
+
+    List<QuizQuestion> _parseQuizQuestions(String response) {
+      // Parse quiz questions from Dialogflow response
+      // This is a simplified implementation - in production, you'd have more sophisticated parsing
+      final questions = <QuizQuestion>[];
+
+      final questionPattern = RegExp(r'(\d+)\.\s*([^?]+\?)\s*(A[^\n]*)\s*(B[^\n]*)\s*(C[^\n]*)\s*(D[^\n]*)\s*คำตอบ[:\s]*([ABCD])');
+      final matches = questionPattern.allMatches(response);
+
+      for (final match in matches) {
+        questions.add(QuizQuestion(
+          id: match.group(1) ?? '',
+          question: match.group(2) ?? '',
+          options: [
+            match.group(3)?.substring(2) ?? '',
+            match.group(4)?.substring(2) ?? '',
+            match.group(5)?.substring(2) ?? '',
+            match.group(6)?.substring(2) ?? '',
+          ],
+          correctAnswer: _letterToIndex(match.group(7) ?? 'A'),
+          explanation: 'คำอธิบาย',
+        ));
+      }
+
+      return questions.isNotEmpty ? questions : _getDefaultQuestions();
+    }
+
+    List<String> _extractExamplesFromResponse(String response) {
+      final examplePattern = RegExp(r'ตัวอย่าง[:\s]*`([^`]+)`');
+      final matches = examplePattern.allMatches(response);
+      return matches.map((match) => match.group(1) ?? '').toList();
+    }
+
+    List<String> _extractRelatedCommandsFromResponse(String response) {
+      final relatedPattern = RegExp(r'คำสั่งที่เกี่ยวข้อง[:\s]*([^\n\.]+)');
+      final match = relatedPattern.firstMatch(response);
+      return match?.group(1)?.split(',').map((e) => e.trim()).toList() ?? [];
+    }
+
+    List<String> _extractTipsFromResponse(String response) {
+      final tipsPattern = RegExp(r'เคล็ดลับ[:\s]*([^\n]+)');
+      final matches = tipsPattern.allMatches(response);
+      return matches.map((match) => match.group(1) ?? '').toList();
+    }
+
+    List<String> _extractSuggestionsFromResponse(String response) {
+      final suggestionPattern = RegExp(r'คำแนะนำ[:\s]*([^\n\.]+)');
+      final match = suggestionPattern.firstMatch(response);
+      return match?.group(1)?.split(',').map((e) => e.trim()).toList() ?? [];
+    }
+
+    bool _isCommandValid(String response) {
+      return !response.toLowerCase().contains('ผิด') &&
+          !response.toLowerCase().contains('ไม่ถูกต้อง') &&
+          !response.toLowerCase().contains('error');
+    }
+
+    int _letterToIndex(String letter) {
+      switch (letter.toUpperCase()) {
+        case 'A': return 0;
+        case 'B': return 1;
+        case 'C': return 2;
+        case 'D': return 3;
+        default: return 0;
+      }
+    }
+
+    List<QuizQuestion> _getDefaultQuestions() {
+      return [
+        QuizQuestion(
+          id: '1',
+          question: 'คำสั่งใดใช้สำหรับแสดงรายการไฟล์ในไดเรกทอรี?',
+          options: ['ls', 'cd', 'pwd', 'mkdir'],
+          correctAnswer: 0,
+          explanation: 'คำสั่ง ls ใช้สำหรับแสดงรายการไฟล์และไดเรกทอรี',
         ),
-      );
+      ];
+    }
 
-      return DialogflowResponse.fromDetectIntentResponse(response);
-    } catch (e) {
-      print('Error in detectIntent: $e');
-      throw DialogflowException('Failed to get response from Dialogflow: $e');
+    /// Clean up resources
+    void dispose() {
+      _dialogflowApi?.client.close();
+      _isInitialized = false;
     }
   }
-
-  // Get small talk response
-  Future<String> getSmallTalkResponse(String message) async {
-    try {
-      final response = await detectIntent(
-        message: message,
-        sessionId: 'smalltalk_session',
-        languageCode: 'th',
-      );
-
-      return response.fulfillmentText ?? 'ขออภัย ฉันไม่เข้าใจคำถามของคุณ';
-    } catch (e) {
-      return 'เกิดข้อผิดพลาดในการประมวลผลคำถาม กรุณาลองใหม่อีกครั้ง';
-    }
-  }
-
-  // Get Linux command explanation
-  Future<LinuxCommandResponse> getLinuxCommandHelp(String command) async {
-    try {
-      final response = await detectIntent(
-        message: 'อธิบายคำสั่ง Linux: $command',
-        sessionId: 'linux_help_session',
-        languageCode: 'th',
-      );
-
-      return LinuxCommandResponse.fromDialogflowResponse(response);
-    } catch (e) {
-      throw DialogflowException('Failed to get Linux command help: $e');
-    }
-  }
-
-  // Get learning path recommendation
-  Future<LearningPathResponse> getLearningPath({
-    required String userLevel,
-    required List<String> completedCommands,
-  }) async {
-    try {
-      final message = 'แนะนำเส้นทางการเรียนรู้สำหรับระดับ $userLevel ที่เรียนจบแล้ว: ${completedCommands.join(", ")}';
-
-      final response = await detectIntent(
-        message: message,
-        sessionId: 'learning_path_session',
-        languageCode: 'th',
-      );
-
-      return LearningPathResponse.fromDialogflowResponse(response);
-    } catch (e) {
-      throw DialogflowException('Failed to get learning path: $e');
-    }
-  }
-
-  // Analyze user progress and give feedback
-  Future<String> getProgressFeedback({
-    required int completedLessons,
-    required int totalLessons,
-    required double accuracy,
-    required int streak,
-  }) async {
-    try {
-      final message = '''วิเคราะห์ความก้าวหน้า: 
-        เรียนจบแล้ว $completedLessons จาก $totalLessons บทเรียน
-        ความแม่นยำ ${(accuracy * 100).toStringAsFixed(1)}%
-        เรียนติดต่อกันได้ $streak วัน''';
-
-      final response = await detectIntent(
-        message: message,
-        sessionId: 'progress_feedback_session',
-        languageCode: 'th',
-      );
-
-      return response.fulfillmentText ?? 'ยินดีด้วย! คุณมีความก้าวหน้าที่ดีมาก';
-    } catch (e) {
-      return 'ไม่สามารถวิเคราะห์ความก้าวหน้าได้ในขณะนี้';
-    }
-  }
-
-  // Generate quiz question
-  Future<QuizQuestion> generateQuiz({
-    required String topic,
-    required String difficulty,
-  }) async {
-    try {
-      final message = 'สร้างคำถามเกี่ยวกับ $topic ระดับ $difficulty';
-
-      final response = await detectIntent(
-        message: message,
-        sessionId: 'quiz_generation_session',
-        languageCode: 'th',
-      );
-
-      return QuizQuestion.fromDialogflowResponse(response);
-    } catch (e) {
-      throw DialogflowException('Failed to generate quiz: $e');
-    }
-  }
-
-  // Clean up resources
-  void dispose() {
-    _authClient?.close();
-    _authClient = null;
-    _initialized = false;
-  }
-}
 
 // Response models
-class DialogflowResponse {
-  final String? fulfillmentText;
+  class DialogflowResponse {
+  final String fulfillmentText;
+  final String intentName;
+  final double confidence;
   final Map<String, dynamic>? parameters;
-  final String? intent;
-  final double? confidence;
+  final bool isError;
 
-  DialogflowResponse({
-    this.fulfillmentText,
-    this.parameters,
-    this.intent,
-    this.confidence,
+  const DialogflowResponse({
+  required this.fulfillmentText,
+  required this.intentName,
+  required this.confidence,
+  this.parameters,
+  this.isError = false,
   });
 
-  static DialogflowResponse fromDetectIntentResponse(dynamic response) {
-    return DialogflowResponse(
-      fulfillmentText: response['queryResult']?['fulfillmentText'],
-      parameters: response['queryResult']?['parameters'],
-      intent: response['queryResult']?['intent']?['displayName'],
-      confidence: response['queryResult']?['intentDetectionConfidence']?.toDouble(),
-    );
+  factory DialogflowResponse.fromDetectIntentResponse(DetectIntentResponse response) {
+  return DialogflowResponse(
+  fulfillmentText: response.queryResult?.fulfillmentText ?? 'ไม่มีการตอบกลับ',
+  intentName: response.queryResult?.intent?.displayName ?? 'Unknown',
+  confidence: response.queryResult?.intentDetectionConfidence ?? 0.0,
+  parameters: response.queryResult?.parameters,
+  );
   }
-}
 
-class LinuxCommandResponse {
-  final String command;
-  final String description;
-  final String syntax;
-  final List<String> examples;
-  final List<String> options;
-
-  LinuxCommandResponse({
-    required this.command,
-    required this.description,
-    required this.syntax,
-    required this.examples,
-    required this.options,
-  });
-
-  static LinuxCommandResponse fromDialogflowResponse(DialogflowResponse response) {
-    final parameters = response.parameters ?? {};
-    return LinuxCommandResponse(
-      command: parameters['command'] ?? '',
-      description: response.fulfillmentText ?? '',
-      syntax: parameters['syntax'] ?? '',
-      examples: List<String>.from(parameters['examples'] ?? []),
-      options: List<String>.from(parameters['options'] ?? []),
-    );
+  factory DialogflowResponse.error(String message) {
+  return DialogflowResponse(
+  fulfillmentText: message,
+  intentName: 'Error',
+  confidence: 0.0,
+  isError: true,
+  );
   }
-}
+  }
 
-class LearningPathResponse {
-  final List<String> recommendedCommands;
+  class LearningPathResponse {
   final String explanation;
-  final String nextTopic;
+  final List<String> recommendedCommands;
+  final String? nextTopic;
+  final String difficulty;
 
-  LearningPathResponse({
-    required this.recommendedCommands,
-    required this.explanation,
-    required this.nextTopic,
+  const LearningPathResponse({
+  required this.explanation,
+  required this.recommendedCommands,
+  this.nextTopic,
+  required this.difficulty,
+  });
+  }
+
+  class QuizResponse {
+  final String topic;
+  final String difficulty;
+  final List<QuizQuestion> questions;
+  final int timeLimit;
+  final bool isError;
+
+  const QuizResponse({
+  required this.topic,
+  required this.difficulty,
+  required this.questions,
+  required this.timeLimit,
+  this.isError = false,
   });
 
-  static LearningPathResponse fromDialogflowResponse(DialogflowResponse response) {
-    final parameters = response.parameters ?? {};
-    return LearningPathResponse(
-      recommendedCommands: List<String>.from(parameters['recommended_commands'] ?? []),
-      explanation: response.fulfillmentText ?? '',
-      nextTopic: parameters['next_topic'] ?? '',
-    );
+  factory QuizResponse.error(String topic, String difficulty) {
+  return QuizResponse(
+  topic: topic,
+  difficulty: difficulty,
+  questions: [],
+  timeLimit: 0,
+  isError: true,
+  );
   }
-}
+  }
 
-class QuizQuestion {
+  class QuizQuestion {
+  final String id;
   final String question;
   final List<String> options;
-  final String correctAnswer;
+  final int correctAnswer;
   final String explanation;
 
-  QuizQuestion({
-    required this.question,
-    required this.options,
-    required this.correctAnswer,
-    required this.explanation,
+  const QuizQuestion({
+  required this.id,
+  required this.question,
+  required this.options,
+  required this.correctAnswer,
+  required this.explanation,
+  });
+  }
+
+  class CommandExplanationResponse {
+  final String command;
+  final String explanation;
+  final List<String> examples;
+  final List<String> relatedCommands;
+  final List<String> tips;
+  final bool isError;
+
+  const CommandExplanationResponse({
+  required this.command,
+  required this.explanation,
+  required this.examples,
+  required this.relatedCommands,
+  required this.tips,
+  this.isError = false,
   });
 
-  static QuizQuestion fromDialogflowResponse(DialogflowResponse response) {
-    final parameters = response.parameters ?? {};
-    return QuizQuestion(
-      question: response.fulfillmentText ?? '',
-      options: List<String>.from(parameters['options'] ?? []),
-      correctAnswer: parameters['correct_answer'] ?? '',
-      explanation: parameters['explanation'] ?? '',
-    );
+  factory CommandExplanationResponse.error(String command) {
+  return CommandExplanationResponse(
+  command: command,
+  explanation: 'ขออภัย ไม่สามารถอธิบายคำสั่งนี้ได้ในขณะนี้',
+  examples: [],
+  relatedCommands: [],
+  tips: [],
+  isError: true,
+  );
   }
-}
+  }
 
-// Exception classes
-class DialogflowException implements Exception {
+  class ValidationResponse {
+  final bool isValid;
   final String message;
-  DialogflowException(this.message);
+  final List<String> suggestions;
 
-  @override
-  String toString() => 'DialogflowException: $message';
-}
+  const ValidationResponse({
+  required this.isValid,
+  required this.message,
+  required this.suggestions,
+  });
+  }

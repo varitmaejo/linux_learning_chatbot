@@ -1,395 +1,416 @@
 import 'package:flutter/foundation.dart';
-import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import '../models/user_model.dart';
-import '../services/firebase_service.dart';
-import '../services/analytics_service.dart';
-import '../constants/firebase_constants.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import '../../core/services/firebase_service.dart';
+import '../../core/constants/firebase_constants.dart';
+import '../../data/models/user_model.dart';
 
-class AuthProvider with ChangeNotifier {
+enum AuthStatus {
+  initial,
+  loading,
+  authenticated,
+  unauthenticated,
+  error
+}
+
+class AuthProvider extends ChangeNotifier {
   final FirebaseService _firebaseService = FirebaseService.instance;
-  final AnalyticsService _analyticsService = AnalyticsService.instance;
 
-  // User state
-  UserModel? _currentUser;
+  AuthStatus _status = AuthStatus.initial;
   User? _firebaseUser;
-  bool _isAuthenticated = false;
-  bool _isLoading = false;
+  UserModel? _userModel;
+  String? _errorMessage;
   bool _isInitialized = false;
 
-  // App settings
-  bool _isDarkMode = false;
-  Locale _currentLocale = const Locale('th', 'TH');
-  double _textScale = 1.0;
-  bool _notificationsEnabled = true;
-  bool _voiceEnabled = true;
-  bool _analyticsEnabled = true;
-  bool _offlineMode = false;
-
   // Getters
-  UserModel? get currentUser => _currentUser;
+  AuthStatus get status => _status;
   User? get firebaseUser => _firebaseUser;
-  bool get isAuthenticated => _isAuthenticated;
-  bool get isLoading => _isLoading;
+  UserModel? get currentUser => _userModel;
+  String? get errorMessage => _errorMessage;
   bool get isInitialized => _isInitialized;
-  bool get isDarkMode => _isDarkMode;
-  Locale get currentLocale => _currentLocale;
-  double get textScale => _textScale;
-  bool get notificationsEnabled => _notificationsEnabled;
-  bool get voiceEnabled => _voiceEnabled;
-  bool get analyticsEnabled => _analyticsEnabled;
-  bool get offlineMode => _offlineMode;
+  bool get isAuthenticated => _firebaseUser != null;
+  bool get isAnonymous => _firebaseUser?.isAnonymous ?? false;
+  String? get uid => _firebaseUser?.uid;
 
-  // Initialize authentication
+  /// Initialize auth provider
   Future<void> initialize() async {
-    if (_isInitialized) return;
-
     try {
-      _isLoading = true;
-      notifyListeners();
-
-      // Load settings from SharedPreferences
-      await _loadSettings();
+      _setStatus(AuthStatus.loading);
 
       // Listen to auth state changes
       _firebaseService.authStateChanges.listen(_onAuthStateChanged);
 
       // Check current user
-      _firebaseUser = _firebaseService.currentUser;
+      _firebaseUser = _firebaseService.getCurrentUser();
+
       if (_firebaseUser != null) {
-        await _loadUserProfile(_firebaseUser!.uid);
-        _isAuthenticated = true;
+        await _loadUserModel(_firebaseUser!.uid);
+        _setStatus(AuthStatus.authenticated);
+      } else {
+        _setStatus(AuthStatus.unauthenticated);
       }
 
       _isInitialized = true;
-    } catch (e) {
-      debugPrint('Error initializing auth: $e');
-    } finally {
-      _isLoading = false;
       notifyListeners();
+
+    } catch (e) {
+      _setError('Initialization failed: ${e.toString()}');
     }
   }
 
-  // Handle auth state changes
+  /// Handle auth state changes
   void _onAuthStateChanged(User? user) async {
-    try {
-      _firebaseUser = user;
+    _firebaseUser = user;
 
-      if (user != null) {
-        // User signed in
-        await _loadUserProfile(user.uid);
-        _isAuthenticated = true;
-
-        // Log analytics
-        await _analyticsService.logEvent('user_signed_in', {
-          'user_id': user.uid,
-          'is_anonymous': user.isAnonymous,
-          'sign_in_method': user.providerData.isNotEmpty
-              ? user.providerData.first.providerId
-              : 'anonymous',
-        });
-      } else {
-        // User signed out
-        _currentUser = null;
-        _isAuthenticated = false;
-
-        await _analyticsService.logEvent('user_signed_out', {});
-      }
-
-      notifyListeners();
-    } catch (e) {
-      debugPrint('Error handling auth state change: $e');
+    if (user != null) {
+      await _loadUserModel(user.uid);
+      _setStatus(AuthStatus.authenticated);
+    } else {
+      _userModel = null;
+      _setStatus(AuthStatus.unauthenticated);
     }
   }
 
-  // Load user profile from Firebase
-  Future<void> _loadUserProfile(String uid) async {
-    try {
-      final userProfile = await _firebaseService.getUserProfile(uid);
-      if (userProfile != null) {
-        _currentUser = userProfile;
-      } else {
-        // Create new user profile if doesn't exist
-        await _createUserProfile();
-      }
-    } catch (e) {
-      debugPrint('Error loading user profile: $e');
-    }
-  }
-
-  // Create new user profile
-  Future<void> _createUserProfile() async {
-    if (_firebaseUser == null) return;
-
-    try {
-      _currentUser = UserModel(
-        uid: _firebaseUser!.uid,
-        email: _firebaseUser!.email ?? '',
-        displayName: _firebaseUser!.displayName ?? 'ผู้ใช้งาน',
-        photoURL: _firebaseUser!.photoURL,
-        createdAt: DateTime.now(),
-        lastLoginAt: DateTime.now(),
-        isAnonymous: _firebaseUser!.isAnonymous,
-      );
-
-      // Save to Firebase
-      await _firebaseService.usersCollection
-          .doc(_firebaseUser!.uid)
-          .set(_currentUser!.toMap());
-    } catch (e) {
-      debugPrint('Error creating user profile: $e');
-    }
-  }
-
-  // Sign in anonymously
+  /// Sign in anonymously
   Future<bool> signInAnonymously() async {
     try {
-      _isLoading = true;
-      notifyListeners();
+      _setStatus(AuthStatus.loading);
 
-      final credential = await _firebaseService.signInAnonymously();
+      final userCredential = await _firebaseService.signInAnonymously();
 
-      // User profile will be created automatically in _onAuthStateChanged
+      if (userCredential?.user != null) {
+        await _createUserModel(userCredential!.user!, isAnonymous: true);
+        return true;
+      }
 
-      return credential.user != null;
-    } catch (e) {
-      debugPrint('Error signing in anonymously: $e');
+      _setError('Failed to sign in anonymously');
       return false;
-    } finally {
-      _isLoading = false;
-      notifyListeners();
-    }
-  }
 
-  // Sign in with email and password
-  Future<AuthResult> signInWithEmail(String email, String password) async {
-    try {
-      _isLoading = true;
-      notifyListeners();
-
-      final credential = await _firebaseService.signInWithEmail(email, password);
-
-      return AuthResult(
-        success: true,
-        user: credential.user,
-        message: 'เข้าสู่ระบบสำเร็จ',
-      );
     } on FirebaseAuthException catch (e) {
-      return AuthResult(
-        success: false,
-        error: e.code,
-        message: _getAuthErrorMessage(e.code),
-      );
+      _setError(_getAuthErrorMessage(e));
+      return false;
     } catch (e) {
-      return AuthResult(
-        success: false,
-        error: 'unknown',
-        message: 'เกิดข้อผิดพลาดในการเข้าสู่ระบบ',
-      );
-    } finally {
-      _isLoading = false;
-      notifyListeners();
+      _setError('Sign in failed: ${e.toString()}');
+      return false;
     }
   }
 
-  // Create account with email and password
-  Future<AuthResult> createAccountWithEmail(
+  /// Sign in with email and password
+  Future<bool> signInWithEmailAndPassword(String email, String password) async {
+    try {
+      _setStatus(AuthStatus.loading);
+
+      final userCredential = await _firebaseService.signInWithEmailAndPassword(
+        email.trim(),
+        password,
+      );
+
+      if (userCredential?.user != null) {
+        await _loadUserModel(userCredential!.user!.uid);
+        return true;
+      }
+
+      _setError('Failed to sign in');
+      return false;
+
+    } on FirebaseAuthException catch (e) {
+      _setError(_getAuthErrorMessage(e));
+      return false;
+    } catch (e) {
+      _setError('Sign in failed: ${e.toString()}');
+      return false;
+    }
+  }
+
+  /// Create account with email and password
+  Future<bool> createAccountWithEmailAndPassword(
       String email,
       String password,
       String displayName,
       ) async {
     try {
-      _isLoading = true;
-      notifyListeners();
+      _setStatus(AuthStatus.loading);
 
-      final credential = await _firebaseService.createAccountWithEmail(
-        email,
+      final userCredential = await _firebaseService.createAccountWithEmailAndPassword(
+        email.trim(),
         password,
-        displayName,
       );
 
-      return AuthResult(
-        success: true,
-        user: credential.user,
-        message: 'สร้างบัญชีสำเร็จ',
-      );
+      if (userCredential?.user != null) {
+        // Update display name
+        await userCredential!.user!.updateDisplayName(displayName);
+
+        // Create user model
+        await _createUserModel(
+          userCredential.user!,
+          displayName: displayName,
+          isAnonymous: false,
+        );
+
+        return true;
+      }
+
+      _setError('Failed to create account');
+      return false;
+
     } on FirebaseAuthException catch (e) {
-      return AuthResult(
-        success: false,
-        error: e.code,
-        message: _getAuthErrorMessage(e.code),
-      );
+      _setError(_getAuthErrorMessage(e));
+      return false;
     } catch (e) {
-      return AuthResult(
-        success: false,
-        error: 'unknown',
-        message: 'เกิดข้อผิดพลาดในการสร้างบัญชี',
-      );
-    } finally {
-      _isLoading = false;
-      notifyListeners();
-    }
-  }
-
-  // Sign out
-  Future<void> signOut() async {
-    try {
-      _isLoading = true;
-      notifyListeners();
-
-      await _firebaseService.signOut();
-
-      // Clear local data
-      _currentUser = null;
-      _firebaseUser = null;
-      _isAuthenticated = false;
-    } catch (e) {
-      debugPrint('Error signing out: $e');
-    } finally {
-      _isLoading = false;
-      notifyListeners();
-    }
-  }
-
-  // Update user profile
-  Future<bool> updateUserProfile({
-    String? displayName,
-    String? photoURL,
-    String? currentDifficulty,
-    String? preferredLanguage,
-    Map<String, dynamic>? settings,
-  }) async {
-    if (_currentUser == null) return false;
-
-    try {
-      final updatedUser = _currentUser!.copyWith(
-        displayName: displayName ?? _currentUser!.displayName,
-        photoURL: photoURL ?? _currentUser!.photoURL,
-        currentDifficulty: currentDifficulty ?? _currentUser!.currentDifficulty,
-        preferredLanguage: preferredLanguage ?? _currentUser!.preferredLanguage,
-        settings: settings ?? _currentUser!.settings,
-        lastActivity: DateTime.now(),
-      );
-
-      await _firebaseService.updateUserProfile(
-        _currentUser!.uid,
-        updatedUser.toMap(),
-      );
-
-      _currentUser = updatedUser;
-      notifyListeners();
-
-      return true;
-    } catch (e) {
-      debugPrint('Error updating user profile: $e');
+      _setError('Account creation failed: ${e.toString()}');
       return false;
     }
   }
 
-  // Settings methods
-
-  // Toggle dark mode
-  void toggleDarkMode() {
-    _isDarkMode = !_isDarkMode;
-    _saveSettings();
-    notifyListeners();
-  }
-
-  // Set dark mode
-  void setDarkMode(bool isDark) {
-    _isDarkMode = isDark;
-    _saveSettings();
-    notifyListeners();
-  }
-
-  // Change language
-  void changeLanguage(String languageCode) {
-    _currentLocale = Locale(languageCode, languageCode == 'th' ? 'TH' : 'US');
-    _saveSettings();
-
-    // Update user profile if authenticated
-    if (_isAuthenticated) {
-      updateUserProfile(preferredLanguage: languageCode);
-    }
-
-    notifyListeners();
-  }
-
-  // Set text scale
-  void setTextScale(double scale) {
-    _textScale = scale.clamp(0.8, 1.4);
-    _saveSettings();
-    notifyListeners();
-  }
-
-  // Toggle notifications
-  void toggleNotifications() {
-    _notificationsEnabled = !_notificationsEnabled;
-    _saveSettings();
-    notifyListeners();
-  }
-
-  // Toggle voice
-  void toggleVoice() {
-    _voiceEnabled = !_voiceEnabled;
-    _saveSettings();
-    notifyListeners();
-  }
-
-  // Toggle analytics
-  void toggleAnalytics() {
-    _analyticsEnabled = !_analyticsEnabled;
-    _saveSettings();
-    notifyListeners();
-  }
-
-  // Toggle offline mode
-  void toggleOfflineMode() {
-    _offlineMode = !_offlineMode;
-    _saveSettings();
-    notifyListeners();
-  }
-
-  // Load settings from SharedPreferences
-  Future<void> _loadSettings() async {
+  /// Convert anonymous account to permanent account
+  Future<bool> convertAnonymousAccount(String email, String password, String displayName) async {
     try {
-      final prefs = await SharedPreferences.getInstance();
+      if (_firebaseUser == null || !_firebaseUser!.isAnonymous) {
+        _setError('No anonymous user to convert');
+        return false;
+      }
 
-      _isDarkMode = prefs.getBool(FirebaseConstants.settingsDarkMode) ?? false;
-      _textScale = prefs.getDouble(FirebaseConstants.settingsTextScale) ?? 1.0;
-      _notificationsEnabled = prefs.getBool(FirebaseConstants.settingsNotificationsEnabled) ?? true;
-      _voiceEnabled = prefs.getBool(FirebaseConstants.settingsVoiceEnabled) ?? true;
-      _analyticsEnabled = prefs.getBool(FirebaseConstants.settingsAnalyticsEnabled) ?? true;
-      _offlineMode = prefs.getBool(FirebaseConstants.settingsOfflineMode) ?? false;
+      _setStatus(AuthStatus.loading);
 
-      final languageCode = prefs.getString(FirebaseConstants.settingsLanguage) ?? 'th';
-      _currentLocale = Locale(languageCode, languageCode == 'th' ? 'TH' : 'US');
+      // Create email credential
+      final credential = EmailAuthProvider.credential(email: email, password: password);
+
+      // Link anonymous account with email credential
+      final userCredential = await _firebaseUser!.linkWithCredential(credential);
+
+      if (userCredential.user != null) {
+        // Update display name
+        await userCredential.user!.updateDisplayName(displayName);
+
+        // Update user model
+        await _updateUserModel({
+          FirebaseConstants.emailField: email,
+          FirebaseConstants.displayNameField: displayName,
+          FirebaseConstants.isAnonymousField: false,
+          FirebaseConstants.updatedAtField: FieldValue.serverTimestamp(),
+        });
+
+        return true;
+      }
+
+      _setError('Failed to convert anonymous account');
+      return false;
+
+    } on FirebaseAuthException catch (e) {
+      _setError(_getAuthErrorMessage(e));
+      return false;
     } catch (e) {
-      debugPrint('Error loading settings: $e');
+      _setError('Account conversion failed: ${e.toString()}');
+      return false;
     }
   }
 
-  // Save settings to SharedPreferences
-  Future<void> _saveSettings() async {
+  /// Update user profile
+  Future<bool> updateProfile({String? displayName, String? photoUrl}) async {
     try {
-      final prefs = await SharedPreferences.getInstance();
+      if (_firebaseUser == null) return false;
 
-      await prefs.setBool(FirebaseConstants.settingsDarkMode, _isDarkMode);
-      await prefs.setDouble(FirebaseConstants.settingsTextScale, _textScale);
-      await prefs.setBool(FirebaseConstants.settingsNotificationsEnabled, _notificationsEnabled);
-      await prefs.setBool(FirebaseConstants.settingsVoiceEnabled, _voiceEnabled);
-      await prefs.setBool(FirebaseConstants.settingsAnalyticsEnabled, _analyticsEnabled);
-      await prefs.setBool(FirebaseConstants.settingsOfflineMode, _offlineMode);
-      await prefs.setString(FirebaseConstants.settingsLanguage, _currentLocale.languageCode);
+      _setStatus(AuthStatus.loading);
+
+      // Update Firebase Auth profile
+      if (displayName != null) {
+        await _firebaseUser!.updateDisplayName(displayName);
+      }
+      if (photoUrl != null) {
+        await _firebaseUser!.updatePhotoURL(photoUrl);
+      }
+
+      // Update Firestore document
+      final updateData = <String, dynamic>{
+        FirebaseConstants.updatedAtField: FieldValue.serverTimestamp(),
+      };
+
+      if (displayName != null) {
+        updateData[FirebaseConstants.displayNameField] = displayName;
+      }
+      if (photoUrl != null) {
+        updateData[FirebaseConstants.photoUrlField] = photoUrl;
+      }
+
+      await _updateUserModel(updateData);
+
+      _setStatus(AuthStatus.authenticated);
+      return true;
+
     } catch (e) {
-      debugPrint('Error saving settings: $e');
+      _setError('Profile update failed: ${e.toString()}');
+      return false;
     }
   }
 
-  // Get authentication error message in Thai
-  String _getAuthErrorMessage(String errorCode) {
-    switch (errorCode) {
+  /// Reset password
+  Future<bool> resetPassword(String email) async {
+    try {
+      await FirebaseAuth.instance.sendPasswordResetEmail(email: email.trim());
+      return true;
+    } on FirebaseAuthException catch (e) {
+      _setError(_getAuthErrorMessage(e));
+      return false;
+    } catch (e) {
+      _setError('Password reset failed: ${e.toString()}');
+      return false;
+    }
+  }
+
+  /// Sign out
+  Future<void> signOut() async {
+    try {
+      _setStatus(AuthStatus.loading);
+      await _firebaseService.signOut();
+      _userModel = null;
+      _setStatus(AuthStatus.unauthenticated);
+    } catch (e) {
+      _setError('Sign out failed: ${e.toString()}');
+    }
+  }
+
+  /// Delete account
+  Future<bool> deleteAccount() async {
+    try {
+      if (_firebaseUser == null) return false;
+
+      _setStatus(AuthStatus.loading);
+
+      // Delete user data from Firestore
+      await _deleteUserData(_firebaseUser!.uid);
+
+      // Delete Firebase Auth account
+      await _firebaseUser!.delete();
+
+      _userModel = null;
+      _setStatus(AuthStatus.unauthenticated);
+      return true;
+
+    } on FirebaseAuthException catch (e) {
+      _setError(_getAuthErrorMessage(e));
+      return false;
+    } catch (e) {
+      _setError('Account deletion failed: ${e.toString()}');
+      return false;
+    }
+  }
+
+  /// Create user model in Firestore
+  Future<void> _createUserModel(
+      User firebaseUser, {
+        String? displayName,
+        bool isAnonymous = true,
+      }) async {
+    final userModel = UserModel(
+      id: firebaseUser.uid,
+      email: firebaseUser.email ?? '',
+      displayName: displayName ?? firebaseUser.displayName ?? 'ผู้ใช้งาน',
+      photoUrl: firebaseUser.photoURL,
+      isAnonymous: isAnonymous,
+      level: FirebaseConstants.defaultLevel,
+      xp: FirebaseConstants.defaultXp,
+      streak: FirebaseConstants.defaultStreak,
+      totalCommandsLearned: 0,
+      totalQuizzesCompleted: 0,
+      totalTimeSpent: 0,
+      createdAt: DateTime.now(),
+      updatedAt: DateTime.now(),
+      lastActive: DateTime.now(),
+      preferences: const UserPreferences(),
+    );
+
+    await _firebaseService.createUserDocument(
+      firebaseUser.uid,
+      userModel.toMap(),
+    );
+
+    _userModel = userModel;
+  }
+
+  /// Load user model from Firestore
+  Future<void> _loadUserModel(String uid) async {
+    try {
+      final doc = await _firebaseService.getUserDocument(uid);
+      if (doc?.exists == true && doc?.data() != null) {
+        _userModel = UserModel.fromMap(doc!.data() as Map<String, dynamic>);
+
+        // Update last active
+        await _updateLastActive();
+      }
+    } catch (e) {
+      print('Error loading user model: $e');
+    }
+  }
+
+  /// Update user model in Firestore
+  Future<void> _updateUserModel(Map<String, dynamic> data) async {
+    if (_firebaseUser == null) return;
+
+    try {
+      await _firebaseService.createUserDocument(_firebaseUser!.uid, data);
+
+      // Reload user model
+      await _loadUserModel(_firebaseUser!.uid);
+
+    } catch (e) {
+      print('Error updating user model: $e');
+    }
+  }
+
+  /// Update last active timestamp
+  Future<void> _updateLastActive() async {
+    if (_firebaseUser == null) return;
+
+    try {
+      await _firebaseService.createUserDocument(_firebaseUser!.uid, {
+        FirebaseConstants.lastActiveField: FieldValue.serverTimestamp(),
+      });
+    } catch (e) {
+      print('Error updating last active: $e');
+    }
+  }
+
+  /// Delete user data from Firestore
+  Future<void> _deleteUserData(String uid) async {
+    try {
+      // Delete user document and subcollections
+      final batch = FirebaseFirestore.instance.batch();
+
+      // Delete user document
+      batch.delete(
+          FirebaseFirestore.instance.collection(FirebaseConstants.usersCollection).doc(uid)
+      );
+
+      await batch.commit();
+
+    } catch (e) {
+      print('Error deleting user data: $e');
+    }
+  }
+
+  /// Set status and notify listeners
+  void _setStatus(AuthStatus status) {
+    _status = status;
+    _errorMessage = null;
+    notifyListeners();
+  }
+
+  /// Set error and notify listeners
+  void _setError(String message) {
+    _status = AuthStatus.error;
+    _errorMessage = message;
+    notifyListeners();
+  }
+
+  /// Clear error
+  void clearError() {
+    _errorMessage = null;
+    notifyListeners();
+  }
+
+  /// Get user-friendly error message
+  String _getAuthErrorMessage(FirebaseAuthException e) {
+    switch (e.code) {
       case 'user-not-found':
         return 'ไม่พบผู้ใช้งานนี้';
       case 'wrong-password':
@@ -397,49 +418,23 @@ class AuthProvider with ChangeNotifier {
       case 'email-already-in-use':
         return 'อีเมลนี้ถูกใช้งานแล้ว';
       case 'weak-password':
-        return 'รหัสผ่านง่ายเกินไป';
+        return 'รหัสผ่านไม่ปลอดภัย';
       case 'invalid-email':
         return 'รูปแบบอีเมลไม่ถูกต้อง';
       case 'user-disabled':
-        return 'บัญชีผู้ใช้ถูกปิดใช้งาน';
+        return 'บัญชีผู้ใช้งานถูกปิดใช้งาน';
       case 'too-many-requests':
-        return 'มีการเข้าสู่ระบบมากเกินไป กรุณาลองใหม่ภายหลัง';
+        return 'มีการพยายามเข้าสู่ระบบมากเกินไป กรุณาลองใหม่ในภายหลัง';
       case 'network-request-failed':
-        return 'ไม่สามารถเชื่อมต่ออินเทอร์เน็ตได้';
+        return 'เชื่อมต่อเครือข่ายไม่ได้';
+      case 'requires-recent-login':
+        return 'กรุณาเข้าสู่ระบบใหม่';
+      case 'credential-already-in-use':
+        return 'ข้อมูลการตรวจสอบสิทธิ์นี้ถูกใช้แล้ว';
+      case 'invalid-credential':
+        return 'ข้อมูลการตรวจสอบสิทธิ์ไม่ถูกต้อง';
       default:
-        return 'เกิดข้อผิดพลาดในการยืนยันตัวตน';
+        return 'เกิดข้อผิดพลาดในการตรวจสอบสิทธิ์: ${e.message}';
     }
   }
-
-  // Check if user needs onboarding
-  bool get needsOnboarding {
-    return _currentUser == null ||
-        _currentUser!.totalLessonsCompleted == 0;
-  }
-
-  // Get user experience level
-  String get userExperienceLevel {
-    if (_currentUser == null) return 'ผู้เริ่มต้น';
-    return _currentUser!.experienceTitle;
-  }
-
-  @override
-  void dispose() {
-    super.dispose();
-  }
-}
-
-// Authentication result class
-class AuthResult {
-  final bool success;
-  final User? user;
-  final String? error;
-  final String message;
-
-  AuthResult({
-    required this.success,
-    this.user,
-    this.error,
-    required this.message,
-  });
 }

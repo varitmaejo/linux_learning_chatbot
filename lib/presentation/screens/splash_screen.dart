@@ -1,12 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:lottie/lottie.dart';
 import 'package:provider/provider.dart';
+import 'package:lottie/lottie.dart';
+import '../../core/theme/colors.dart';
 import '../providers/auth_provider.dart';
-import '../services/firebase_service.dart';
-import '../services/analytics_service.dart';
-import 'home_screen.dart';
-import 'onboarding_screen.dart';
-import '../theme/colors.dart';
+import '../widgets/loading_widget.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({Key? key}) : super(key: key);
@@ -23,20 +20,17 @@ class _SplashScreenState extends State<SplashScreen>
   late Animation<double> _textAnimation;
   late Animation<Offset> _slideAnimation;
 
-  bool _isInitialized = false;
-  String _statusText = 'กำลังเริ่มต้น...';
-
   @override
   void initState() {
     super.initState();
     _initializeAnimations();
-    _initializeApp();
+    _checkAuthStatus();
   }
 
   void _initializeAnimations() {
     // Logo animation controller
     _logoController = AnimationController(
-      duration: const Duration(seconds: 2),
+      duration: const Duration(milliseconds: 2000),
       vsync: this,
     );
 
@@ -64,9 +58,9 @@ class _SplashScreenState extends State<SplashScreen>
       curve: Curves.easeInOut,
     ));
 
-    // Slide animation for status text
+    // Slide animation
     _slideAnimation = Tween<Offset>(
-      begin: const Offset(0, 1),
+      begin: const Offset(0, 0.3),
       end: Offset.zero,
     ).animate(CurvedAnimation(
       parent: _textController,
@@ -76,145 +70,35 @@ class _SplashScreenState extends State<SplashScreen>
     // Start animations
     _logoController.forward();
     Future.delayed(const Duration(milliseconds: 500), () {
-      _textController.forward();
-    });
-  }
-
-  Future<void> _initializeApp() async {
-    try {
-      // Initialize Firebase services
-      setState(() {
-        _statusText = 'กำลังเชื่อมต่อ Firebase...';
-      });
-      await FirebaseService.instance.initialize();
-
-      // Initialize Analytics
-      setState(() {
-        _statusText = 'กำลังตั้งค่าระบบ...';
-      });
-      await AnalyticsService.instance.initialize();
-
-      // Initialize Auth Provider
-      setState(() {
-        _statusText = 'กำลังโหลดข้อมูลผู้ใช้...';
-      });
-
-      final authProvider = Provider.of<AuthProvider>(context, listen: false);
-      if (!authProvider.isInitialized) {
-        await authProvider.initialize();
+      if (mounted) {
+        _textController.forward();
       }
-
-      // Wait for minimum splash duration
-      await Future.delayed(const Duration(seconds: 2));
-
-      setState(() {
-        _statusText = 'เสร็จสิ้น!';
-        _isInitialized = true;
-      });
-
-      // Navigate to appropriate screen
-      await Future.delayed(const Duration(milliseconds: 500));
-      _navigateToNextScreen();
-
-    } catch (e) {
-      setState(() {
-        _statusText = 'เกิดข้อผิดพลาด: $e';
-      });
-
-      // Show error dialog and retry option
-      await Future.delayed(const Duration(seconds: 2));
-      _showErrorDialog();
-    }
-  }
-
-  void _navigateToNextScreen() {
-    final authProvider = Provider.of<AuthProvider>(context, listen: false);
-
-    if (mounted) {
-      Navigator.of(context).pushReplacement(
-        PageRouteBuilder(
-          pageBuilder: (context, animation, secondaryAnimation) {
-            // Check if user needs onboarding
-            if (authProvider.needsOnboarding && !authProvider.isAuthenticated) {
-              return const OnboardingScreen();
-            } else {
-              return const HomeScreen();
-            }
-          },
-          transitionsBuilder: (context, animation, secondaryAnimation, child) {
-            const begin = Offset(1.0, 0.0);
-            const end = Offset.zero;
-            const curve = Curves.easeInOut;
-
-            var tween = Tween(begin: begin, end: end).chain(
-              CurveTween(curve: curve),
-            );
-
-            return SlideTransition(
-              position: animation.drive(tween),
-              child: child,
-            );
-          },
-          transitionDuration: const Duration(milliseconds: 300),
-        ),
-      );
-    }
-  }
-
-  void _showErrorDialog() {
-    if (!mounted) return;
-
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          title: Row(
-            children: [
-              Icon(Icons.error_outline, color: AppColors.errorColor),
-              const SizedBox(width: 8),
-              const Text('เกิดข้อผิดพลาด'),
-            ],
-          ),
-          content: const Text(
-            'ไม่สามารถเริ่มต้นแอปพลิเคชันได้ กรุณาตรวจสอบการเชื่อมต่ออินเทอร์เน็ตและลองใหม่อีกครั้ง',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () {
-                Navigator.of(context).pop();
-                _retryInitialization();
-              },
-              child: const Text('ลองใหม่'),
-            ),
-            TextButton(
-              onPressed: () {
-                Navigator.of(context).pop();
-                _navigateToOfflineMode();
-              },
-              child: const Text('ใช้งานแบบออฟไลน์'),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  void _retryInitialization() {
-    setState(() {
-      _isInitialized = false;
-      _statusText = 'กำลังเริ่มต้นใหม่...';
     });
-    _initializeApp();
   }
 
-  void _navigateToOfflineMode() {
-    // Navigate to home screen in offline mode
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute(
-        builder: (context) => const HomeScreen(),
-      ),
-    );
+  void _checkAuthStatus() async {
+    try {
+      // Initialize auth provider
+      final authProvider = Provider.of<AuthProvider>(context, listen: false);
+      await authProvider.initialize();
+
+      // Wait for animations to complete
+      await Future.delayed(const Duration(seconds: 3));
+
+      if (!mounted) return;
+
+      // Navigate based on auth status
+      if (authProvider.isAuthenticated) {
+        Navigator.of(context).pushReplacementNamed('/home');
+      } else {
+        Navigator.of(context).pushReplacementNamed('/onboarding');
+      }
+    } catch (e) {
+      // Handle initialization error
+      if (mounted) {
+        Navigator.of(context).pushReplacementNamed('/onboarding');
+      }
+    }
   }
 
   @override
@@ -227,172 +111,181 @@ class _SplashScreenState extends State<SplashScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppColors.primaryColor,
       body: Container(
-        decoration: BoxDecoration(
+        width: double.infinity,
+        height: double.infinity,
+        decoration: const BoxDecoration(
           gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: AppColors.primaryGradient,
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              AppColors.primaryColor,
+              AppColors.primaryDark,
+            ],
           ),
         ),
         child: SafeArea(
           child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              // Top spacer
-              const Expanded(flex: 2, child: SizedBox()),
-
-              // Logo section
+              // Logo Section
               Expanded(
                 flex: 3,
                 child: Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      // Animated logo
-                      AnimatedBuilder(
-                        animation: _logoAnimation,
-                        builder: (context, child) {
-                          return Transform.scale(
-                            scale: _logoAnimation.value,
-                            child: Container(
-                              width: 120,
-                              height: 120,
-                              decoration: BoxDecoration(
-                                color: Colors.white,
-                                borderRadius: BorderRadius.circular(30),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: Colors.black.withOpacity(0.3),
-                                    blurRadius: 20,
-                                    offset: const Offset(0, 10),
-                                  ),
-                                ],
+                  child: AnimatedBuilder(
+                    animation: _logoAnimation,
+                    builder: (context, child) {
+                      return Transform.scale(
+                        scale: _logoAnimation.value,
+                        child: Container(
+                          width: 120,
+                          height: 120,
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(20),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withOpacity(0.2),
+                                blurRadius: 20,
+                                offset: const Offset(0, 10),
                               ),
-                              child: const Icon(
-                                Icons.terminal,
-                                size: 60,
-                                color: AppColors.primaryColor,
-                              ),
-                            ),
-                          );
-                        },
-                      ),
-
-                      const SizedBox(height: 24),
-
-                      // App title
-                      AnimatedBuilder(
-                        animation: _textAnimation,
-                        builder: (context, child) {
-                          return Opacity(
-                            opacity: _textAnimation.value,
-                            child: Column(
-                              children: [
-                                Text(
-                                  'Linux Learning',
-                                  style: Theme.of(context).textTheme.displayMedium?.copyWith(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.bold,
-                                    letterSpacing: 1.2,
-                                  ),
-                                  textAlign: TextAlign.center,
-                                ),
-                                const SizedBox(height: 8),
-                                Text(
-                                  'Chatbot',
-                                  style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                                    color: Colors.white70,
-                                    fontWeight: FontWeight.w300,
-                                    letterSpacing: 0.8,
-                                  ),
-                                  textAlign: TextAlign.center,
-                                ),
-                                const SizedBox(height: 16),
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 16,
-                                    vertical: 8,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: Colors.white.withOpacity(0.2),
-                                    borderRadius: BorderRadius.circular(20),
-                                    border: Border.all(
-                                      color: Colors.white.withOpacity(0.3),
-                                      width: 1,
-                                    ),
-                                  ),
-                                  child: Text(
-                                    '🐧 เรียนรู้ Linux อย่างสนุกสนาน',
-                                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.w500,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          );
-                        },
-                      ),
-                    ],
+                            ],
+                          ),
+                          child: const Icon(
+                            Icons.terminal,
+                            size: 60,
+                            color: AppColors.primaryColor,
+                          ),
+                        ),
+                      );
+                    },
                   ),
                 ),
               ),
 
-              // Loading section
+              // Text Section
               Expanded(
                 flex: 2,
+                child: SlideTransition(
+                  position: _slideAnimation,
+                  child: FadeTransition(
+                    opacity: _textAnimation,
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Text(
+                          'Linux Learning Chat',
+                          style: TextStyle(
+                            fontSize: 28,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white,
+                            letterSpacing: 1.2,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          'เรียนรู้คำสั่ง Linux ด้วย AI',
+                          style: TextStyle(
+                            fontSize: 16,
+                            color: Colors.white.withOpacity(0.8),
+                            fontWeight: FontWeight.w400,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'ฝึกฝนและทำความเข้าใจระบบปฏิบัติการ Linux',
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: Colors.white.withOpacity(0.7),
+                            fontWeight: FontWeight.w300,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+
+              // Loading Section
+              Expanded(
+                flex: 1,
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    // Loading animation
+                    // Linux Terminal Animation (if Lottie asset exists)
                     SizedBox(
-                      width: 60,
-                      height: 60,
-                      child: CircularProgressIndicator(
-                        valueColor: const AlwaysStoppedAnimation<Color>(Colors.white),
-                        backgroundColor: Colors.white.withOpacity(0.3),
-                        strokeWidth: 3,
-                      ),
-                    ),
+                      width: 80,
+                      height: 80,
+                      child: Consumer<AuthProvider>(
+                        builder: (context, authProvider, child) {
+                          if (authProvider.status == AuthStatus.loading) {
+                            return const LoadingWidget(
+                              color: Colors.white,
+                              size: 30,
+                            );
+                          }
 
-                    const SizedBox(height: 24),
-
-                    // Status text
-                    SlideTransition(
-                      position: _slideAnimation,
-                      child: AnimatedBuilder(
-                        animation: _textAnimation,
-                        builder: (context, child) {
-                          return Opacity(
-                            opacity: _textAnimation.value,
-                            child: Text(
-                              _statusText,
-                              style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                                color: Colors.white70,
-                                fontWeight: FontWeight.w400,
+                          // Terminal typing animation
+                          return Container(
+                            decoration: BoxDecoration(
+                              color: AppColors.terminalBackground,
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(
+                                color: AppColors.terminalGreen,
+                                width: 1,
                               ),
-                              textAlign: TextAlign.center,
+                            ),
+                            child: Center(
+                              child: AnimatedBuilder(
+                                animation: _textController,
+                                builder: (context, child) {
+                                  return Text(
+                                    '> ${_getTypingText(_textController.value)}',
+                                    style: const TextStyle(
+                                      color: AppColors.terminalGreen,
+                                      fontFamily: 'monospace',
+                                      fontSize: 12,
+                                    ),
+                                  );
+                                },
+                              ),
                             ),
                           );
                         },
                       ),
                     ),
 
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 20),
 
-                    // Version info
-                    AnimatedBuilder(
-                      animation: _textAnimation,
-                      builder: (context, child) {
-                        return Opacity(
-                          opacity: _textAnimation.value * 0.7,
-                          child: Text(
-                            'เวอร์ชัน 1.0.0',
-                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              color: Colors.white54,
-                            ),
+                    Consumer<AuthProvider>(
+                      builder: (context, authProvider, child) {
+                        String statusText = 'กำลังเตรียมความพร้อม...';
+
+                        switch (authProvider.status) {
+                          case AuthStatus.initial:
+                            statusText = 'กำลังเริ่มต้น...';
+                            break;
+                          case AuthStatus.loading:
+                            statusText = 'กำลังตรวจสอบสิทธิ์...';
+                            break;
+                          case AuthStatus.authenticated:
+                            statusText = 'ยินดีต้อนรับ!';
+                            break;
+                          case AuthStatus.unauthenticated:
+                            statusText = 'เตรียมความพร้อมเสร็จสิ้น';
+                            break;
+                          case AuthStatus.error:
+                            statusText = 'เกิดข้อผิดพลาด';
+                            break;
+                        }
+
+                        return Text(
+                          statusText,
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: Colors.white.withOpacity(0.8),
+                            fontWeight: FontWeight.w400,
                           ),
                         );
                       },
@@ -401,28 +294,16 @@ class _SplashScreenState extends State<SplashScreen>
                 ),
               ),
 
-              // Bottom section
-              Expanded(
-                flex: 1,
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    AnimatedBuilder(
-                      animation: _textAnimation,
-                      builder: (context, child) {
-                        return Opacity(
-                          opacity: _textAnimation.value * 0.6,
-                          child: Text(
-                            'พัฒนาโดย AI Learning Team',
-                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              color: Colors.white54,
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-                    const SizedBox(height: 16),
-                  ],
+              // Version Info
+              Padding(
+                padding: const EdgeInsets.only(bottom: 20),
+                child: Text(
+                  'เวอร์ชัน 1.0.0',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.white.withOpacity(0.5),
+                    fontWeight: FontWeight.w300,
+                  ),
                 ),
               ),
             ],
@@ -430,5 +311,11 @@ class _SplashScreenState extends State<SplashScreen>
         ),
       ),
     );
+  }
+
+  String _getTypingText(double progress) {
+    const text = 'ls -la';
+    final length = (text.length * progress).round();
+    return text.substring(0, length);
   }
 }

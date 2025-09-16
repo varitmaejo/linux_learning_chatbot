@@ -18,7 +18,7 @@ enum MessageType {
   file
 }
 
-@HiveType(typeId: 1)
+@HiveType(typeId: 3)
 class ChatMessage extends Equatable {
   @HiveField(0)
   final String id;
@@ -62,6 +62,12 @@ class ChatMessage extends Equatable {
   @HiveField(13)
   final Duration? voiceDuration;
 
+  @HiveField(14)
+  final String? userId;
+
+  @HiveField(15)
+  final String? sessionId;
+
   const ChatMessage({
     required this.id,
     required this.text,
@@ -77,6 +83,8 @@ class ChatMessage extends Equatable {
     this.confidence,
     this.quickReplies,
     this.voiceDuration,
+    this.userId,
+    this.sessionId,
   });
 
   // Factory constructor from Map (Firebase)
@@ -87,31 +95,37 @@ class ChatMessage extends Equatable {
       isUser: map['isUser'] ?? false,
       timestamp: (map['timestamp'] as Timestamp?)?.toDate() ?? DateTime.now(),
       messageType: MessageType.values.firstWhere(
-            (e) => e.toString() == map['messageType'],
+            (e) => e.toString() == 'MessageType.${map['messageType']}',
         orElse: () => MessageType.text,
       ),
-      metadata: map['metadata'] != null ? Map<String, dynamic>.from(map['metadata']) : null,
+      metadata: map['metadata'] != null
+          ? Map<String, dynamic>.from(map['metadata'])
+          : null,
       imageUrl: map['imageUrl'],
       fileUrl: map['fileUrl'],
       isRead: map['isRead'] ?? false,
       isFavorite: map['isFavorite'] ?? false,
       replyToMessageId: map['replyToMessageId'],
       confidence: map['confidence']?.toDouble(),
-      quickReplies: map['quickReplies'] != null ? List<String>.from(map['quickReplies']) : null,
+      quickReplies: map['quickReplies'] != null
+          ? List<String>.from(map['quickReplies'])
+          : null,
       voiceDuration: map['voiceDurationMs'] != null
           ? Duration(milliseconds: map['voiceDurationMs'])
           : null,
+      userId: map['userId'],
+      sessionId: map['sessionId'],
     );
   }
 
-  // Convert to Map for Firebase
+  // Convert to Map (Firebase)
   Map<String, dynamic> toMap() {
     return {
       'id': id,
       'text': text,
       'isUser': isUser,
       'timestamp': Timestamp.fromDate(timestamp),
-      'messageType': messageType.toString(),
+      'messageType': messageType.toString().split('.').last,
       'metadata': metadata,
       'imageUrl': imageUrl,
       'fileUrl': fileUrl,
@@ -121,50 +135,8 @@ class ChatMessage extends Equatable {
       'confidence': confidence,
       'quickReplies': quickReplies,
       'voiceDurationMs': voiceDuration?.inMilliseconds,
-    };
-  }
-
-  // JSON serialization (for local storage)
-  factory ChatMessage.fromJson(Map<String, dynamic> json) {
-    return ChatMessage(
-      id: json['id'] ?? '',
-      text: json['text'] ?? '',
-      isUser: json['isUser'] ?? false,
-      timestamp: DateTime.parse(json['timestamp']),
-      messageType: MessageType.values.firstWhere(
-            (e) => e.toString() == json['messageType'],
-        orElse: () => MessageType.text,
-      ),
-      metadata: json['metadata'] != null ? Map<String, dynamic>.from(json['metadata']) : null,
-      imageUrl: json['imageUrl'],
-      fileUrl: json['fileUrl'],
-      isRead: json['isRead'] ?? false,
-      isFavorite: json['isFavorite'] ?? false,
-      replyToMessageId: json['replyToMessageId'],
-      confidence: json['confidence']?.toDouble(),
-      quickReplies: json['quickReplies'] != null ? List<String>.from(json['quickReplies']) : null,
-      voiceDuration: json['voiceDurationMs'] != null
-          ? Duration(milliseconds: json['voiceDurationMs'])
-          : null,
-    );
-  }
-
-  Map<String, dynamic> toJson() {
-    return {
-      'id': id,
-      'text': text,
-      'isUser': isUser,
-      'timestamp': timestamp.toIso8601String(),
-      'messageType': messageType.toString(),
-      'metadata': metadata,
-      'imageUrl': imageUrl,
-      'fileUrl': fileUrl,
-      'isRead': isRead,
-      'isFavorite': isFavorite,
-      'replyToMessageId': replyToMessageId,
-      'confidence': confidence,
-      'quickReplies': quickReplies,
-      'voiceDurationMs': voiceDuration?.inMilliseconds,
+      'userId': userId,
+      'sessionId': sessionId,
     };
   }
 
@@ -184,6 +156,8 @@ class ChatMessage extends Equatable {
     double? confidence,
     List<String>? quickReplies,
     Duration? voiceDuration,
+    String? userId,
+    String? sessionId,
   }) {
     return ChatMessage(
       id: id ?? this.id,
@@ -200,39 +174,59 @@ class ChatMessage extends Equatable {
       confidence: confidence ?? this.confidence,
       quickReplies: quickReplies ?? this.quickReplies,
       voiceDuration: voiceDuration ?? this.voiceDuration,
+      userId: userId ?? this.userId,
+      sessionId: sessionId ?? this.sessionId,
     );
   }
 
   // Helper methods
   bool get hasMetadata => metadata != null && metadata!.isNotEmpty;
-
-  bool get hasImage => imageUrl != null && imageUrl!.isNotEmpty;
-
-  bool get hasFile => fileUrl != null && fileUrl!.isNotEmpty;
-
-  bool get hasVoice => voiceDuration != null;
-
   bool get hasQuickReplies => quickReplies != null && quickReplies!.isNotEmpty;
-
-  bool get isCommand => messageType == MessageType.linuxCommand;
-
-  bool get isQuiz => messageType == MessageType.quiz;
-
-  bool get isQuizResult => messageType == MessageType.quizResult;
-
-  bool get isError => messageType == MessageType.error;
-
-  bool get isSuggestion => messageType == MessageType.suggestions;
-
+  bool get hasMedia => imageUrl != null || fileUrl != null;
+  bool get isVoiceMessage => messageType == MessageType.voice;
+  bool get isCommandMessage => messageType == MessageType.linuxCommand;
+  bool get isQuizMessage => messageType == MessageType.quiz;
   bool get isSystemMessage => messageType == MessageType.system;
 
-  // Get formatted timestamp
+  // Get command name from metadata for linux command messages
+  String? get commandName {
+    if (messageType == MessageType.linuxCommand && hasMetadata) {
+      return metadata!['commandName'] as String?;
+    }
+    return null;
+  }
+
+  // Get quiz data from metadata
+  Map<String, dynamic>? get quizData {
+    if ((messageType == MessageType.quiz || messageType == MessageType.quizResult) && hasMetadata) {
+      return metadata!['quiz'] as Map<String, dynamic>?;
+    }
+    return null;
+  }
+
+  // Get learning path data from metadata
+  List<String>? get recommendedCommands {
+    if (messageType == MessageType.learningPath && hasMetadata) {
+      return (metadata!['recommendedCommands'] as List?)?.cast<String>();
+    }
+    return null;
+  }
+
+  // Get voice transcription confidence
+  double get voiceConfidence => confidence ?? 0.0;
+
+  // Check if message needs user attention
+  bool get needsAttention {
+    return !isRead && !isUser;
+  }
+
+  // Format timestamp for display
   String get formattedTime {
     final now = DateTime.now();
     final difference = now.difference(timestamp);
 
     if (difference.inMinutes < 1) {
-      return 'เมื่อสักครู่';
+      return 'เมื่อกี้นี้';
     } else if (difference.inHours < 1) {
       return '${difference.inMinutes} นาทีที่แล้ว';
     } else if (difference.inDays < 1) {
@@ -244,77 +238,32 @@ class ChatMessage extends Equatable {
     }
   }
 
-  // Get command details from metadata
-  LinuxCommandDetails? get commandDetails {
-    if (!isCommand || !hasMetadata) return null;
-
-    return LinuxCommandDetails(
-      name: metadata!['command'] ?? '',
-      syntax: metadata!['syntax'] ?? '',
-      description: text,
-      examples: List<String>.from(metadata!['examples'] ?? []),
-      options: List<String>.from(metadata!['options'] ?? []),
-    );
-  }
-
-  // Get quiz details from metadata
-  QuizDetails? get quizDetails {
-    if (!isQuiz || !hasMetadata) return null;
-
-    return QuizDetails(
-      question: text,
-      options: List<String>.from(metadata!['options'] ?? []),
-      correctAnswer: metadata!['correctAnswer'] ?? '',
-      explanation: metadata!['explanation'] ?? '',
-      quizId: metadata!['quizId'] ?? '',
-    );
-  }
-
-  // Get quiz result details from metadata
-  QuizResultDetails? get quizResultDetails {
-    if (!isQuizResult || !hasMetadata) return null;
-
-    return QuizResultDetails(
-      isCorrect: metadata!['isCorrect'] ?? false,
-      correctAnswer: metadata!['correctAnswer'] ?? '',
-      userAnswer: metadata!['userAnswer'] ?? '',
-      explanation: text,
-    );
-  }
-
-  // Get suggestions from metadata
-  List<String> get suggestions {
-    if (!isSuggestion || !hasMetadata) return [];
-    return List<String>.from(metadata!['suggestions'] ?? []);
-  }
-
-  // Get learning path details from metadata
-  LearningPathDetails? get learningPathDetails {
-    if (messageType != MessageType.learningPath || !hasMetadata) return null;
-
-    return LearningPathDetails(
-      recommendedCommands: List<String>.from(metadata!['recommendedCommands'] ?? []),
-      explanation: text,
-      nextTopic: metadata!['nextTopic'] ?? '',
-    );
-  }
-
-  // Check if message is from today
-  bool get isFromToday {
-    final now = DateTime.now();
-    return timestamp.year == now.year &&
-        timestamp.month == now.month &&
-        timestamp.day == now.day;
-  }
-
-  // Get confidence level as string
-  String get confidenceLevel {
-    if (confidence == null) return '';
-
-    if (confidence! >= 0.8) return 'สูง';
-    if (confidence! >= 0.6) return 'กลาง';
-    if (confidence! >= 0.4) return 'ต่ำ';
-    return 'ต่ำมาก';
+  // Get message type display text
+  String get messageTypeDisplayText {
+    switch (messageType) {
+      case MessageType.text:
+        return 'ข้อความ';
+      case MessageType.voice:
+        return 'เสียง';
+      case MessageType.linuxCommand:
+        return 'คำสั่ง Linux';
+      case MessageType.quiz:
+        return 'แบบทดสอบ';
+      case MessageType.quizResult:
+        return 'ผลแบบทดสอบ';
+      case MessageType.learningPath:
+        return 'เส้นทางการเรียน';
+      case MessageType.suggestions:
+        return 'คำแนะนำ';
+      case MessageType.error:
+        return 'ข้อผิดพลาด';
+      case MessageType.system:
+        return 'ระบบ';
+      case MessageType.image:
+        return 'รูปภาพ';
+      case MessageType.file:
+        return 'ไฟล์';
+    }
   }
 
   @override
@@ -333,121 +282,49 @@ class ChatMessage extends Equatable {
     confidence,
     quickReplies,
     voiceDuration,
+    userId,
+    sessionId,
   ];
+
+  @override
+  String toString() {
+    return 'ChatMessage(id: $id, text: $text, isUser: $isUser, messageType: $messageType)';
+  }
 }
 
-// Helper classes for message details
-class LinuxCommandDetails {
-  final String name;
-  final String syntax;
-  final String description;
-  final List<String> examples;
-  final List<String> options;
-
-  const LinuxCommandDetails({
-    required this.name,
-    required this.syntax,
-    required this.description,
-    required this.examples,
-    required this.options,
-  });
-}
-
-class QuizDetails {
-  final String question;
-  final List<String> options;
-  final String correctAnswer;
-  final String explanation;
-  final String quizId;
-
-  const QuizDetails({
-    required this.question,
-    required this.options,
-    required this.correctAnswer,
-    required this.explanation,
-    required this.quizId,
-  });
-}
-
-class QuizResultDetails {
-  final bool isCorrect;
-  final String correctAnswer;
-  final String userAnswer;
-  final String explanation;
-
-  const QuizResultDetails({
-    required this.isCorrect,
-    required this.correctAnswer,
-    required this.userAnswer,
-    required this.explanation,
-  });
-}
-
-class LearningPathDetails {
-  final List<String> recommendedCommands;
-  final String explanation;
-  final String nextTopic;
-
-  const LearningPathDetails({
-    required this.recommendedCommands,
-    required this.explanation,
-    required this.nextTopic,
-  });
-}
-
-// Extension for message type display names
+// Extension for MessageType
 extension MessageTypeExtension on MessageType {
-  String get displayName {
+  String get name {
     switch (this) {
       case MessageType.text:
-        return 'ข้อความ';
+        return 'text';
       case MessageType.voice:
-        return 'ข้อความเสียง';
+        return 'voice';
       case MessageType.linuxCommand:
-        return 'คำสั่ง Linux';
+        return 'linuxCommand';
       case MessageType.quiz:
-        return 'แบบทดสอบ';
+        return 'quiz';
       case MessageType.quizResult:
-        return 'ผลการทดสอบ';
+        return 'quizResult';
       case MessageType.learningPath:
-        return 'เส้นทางการเรียนรู้';
+        return 'learningPath';
       case MessageType.suggestions:
-        return 'คำแนะนำ';
+        return 'suggestions';
       case MessageType.error:
-        return 'ข้อผิดพลาด';
+        return 'error';
       case MessageType.system:
-        return 'ระบบ';
+        return 'system';
       case MessageType.image:
-        return 'รูปภาพ';
+        return 'image';
       case MessageType.file:
-        return 'ไฟล์';
+        return 'file';
     }
   }
 
-  String get icon {
-    switch (this) {
-      case MessageType.text:
-        return '💬';
-      case MessageType.voice:
-        return '🎤';
-      case MessageType.linuxCommand:
-        return '⚡';
-      case MessageType.quiz:
-        return '❓';
-      case MessageType.quizResult:
-        return '✅';
-      case MessageType.learningPath:
-        return '🗺️';
-      case MessageType.suggestions:
-        return '💡';
-      case MessageType.error:
-        return '❌';
-      case MessageType.system:
-        return '🔧';
-      case MessageType.image:
-        return '🖼️';
-      case MessageType.file:
-        return '📁';
-    }
+  static MessageType fromString(String value) {
+    return MessageType.values.firstWhere(
+          (e) => e.name == value,
+      orElse: () => MessageType.text,
+    );
   }
 }

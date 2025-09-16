@@ -1,394 +1,496 @@
+import 'dart:async';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
+import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:flutter_tts/flutter_tts.dart';
-import 'package:speech_to_text/speech_to_text.dart';
 import 'package:permission_handler/permission_handler.dart';
 
-class VoiceService {
+enum VoiceServiceState {
+  idle,
+  listening,
+  processing,
+  speaking,
+  error
+}
+
+enum VoiceRecognitionLanguage {
+  thai,
+  english
+}
+
+class VoiceService extends ChangeNotifier {
   static VoiceService? _instance;
   static VoiceService get instance => _instance ??= VoiceService._();
+
   VoiceService._();
 
-  // TTS and STT instances
-  FlutterTts? _flutterTts;
-  SpeechToText? _speechToText;
+  // Speech to Text
+  late stt.SpeechToText _speechToText;
 
-  // State variables
-  bool _isTtsInitialized = false;
-  bool _isSttInitialized = false;
-  bool _isSpeaking = false;
-  bool _isListening = false;
-  String _lastSpokenText = '';
-  String _lastRecognizedText = '';
+  // Text to Speech
+  late FlutterTts _flutterTts;
+
+  // State management
+  VoiceServiceState _state = VoiceServiceState.idle;
+  bool _isInitialized = false;
+  String _lastWords = '';
+  double _confidence = 0.0;
+  VoiceRecognitionLanguage _currentLanguage = VoiceRecognitionLanguage.thai;
 
   // Settings
-  double _speechRate = 0.5;
-  double _volume = 1.0;
+  double _speechRate = 1.0;
   double _pitch = 1.0;
-  String _language = 'th-TH';
-  String _engine = '';
+  double _volume = 1.0;
+  String _ttsLanguage = 'th-TH';
+  String _sttLanguage = 'th-TH';
+
+  // Stream controllers
+  final StreamController<String> _onSpeechResult = StreamController<String>.broadcast();
+  final StreamController<VoiceServiceState> _onStateChanged = StreamController<VoiceServiceState>.broadcast();
+  final StreamController<String> _onError = StreamController<String>.broadcast();
 
   // Getters
-  bool get isTtsInitialized => _isTtsInitialized;
-  bool get isSttInitialized => _isSttInitialized;
-  bool get isSpeaking => _isSpeaking;
-  bool get isListening => _isListening;
-  String get lastSpokenText => _lastSpokenText;
-  String get lastRecognizedText => _lastRecognizedText;
+  VoiceServiceState get state => _state;
+  bool get isInitialized => _isInitialized;
+  bool get isListening => _state == VoiceServiceState.listening;
+  bool get isSpeaking => _state == VoiceServiceState.speaking;
+  String get lastWords => _lastWords;
+  double get confidence => _confidence;
+  VoiceRecognitionLanguage get currentLanguage => _currentLanguage;
+
+  // Settings getters
   double get speechRate => _speechRate;
-  double get volume => _volume;
   double get pitch => _pitch;
-  String get language => _language;
+  double get volume => _volume;
+  String get ttsLanguage => _ttsLanguage;
+  String get sttLanguage => _sttLanguage;
 
-  // Initialize TTS
-  Future<bool> initializeTts() async {
-    if (_isTtsInitialized) return true;
+  // Streams
+  Stream<String> get onSpeechResult => _onSpeechResult.stream;
+  Stream<VoiceServiceState> get onStateChanged => _onStateChanged.stream;
+  Stream<String> get onError => _onError.stream;
 
+  /// Initialize voice service
+  Future<void> initialize() async {
     try {
+      if (_isInitialized) return;
+
+      // Initialize Speech to Text
+      _speechToText = stt.SpeechToText();
+      await _initializeSpeechToText();
+
+      // Initialize Text to Speech
       _flutterTts = FlutterTts();
+      await _initializeTextToSpeech();
 
-      // Set up TTS handlers
-      await _flutterTts!.setStartHandler(() {
-        _isSpeaking = true;
-        debugPrint('TTS: Started speaking');
-      });
+      _isInitialized = true;
+      print('Voice service initialized successfully');
 
-      await _flutterTts!.setCompletionHandler(() {
-        _isSpeaking = false;
-        debugPrint('TTS: Completed speaking');
-      });
-
-      await _flutterTts!.setCancelHandler(() {
-        _isSpeaking = false;
-        debugPrint('TTS: Cancelled speaking');
-      });
-
-      await _flutterTts!.setErrorHandler((msg) {
-        _isSpeaking = false;
-        debugPrint('TTS Error: $msg');
-      });
-
-      // Configure TTS settings
-      await _flutterTts!.setLanguage(_language);
-      await _flutterTts!.setSpeechRate(_speechRate);
-      await _flutterTts!.setVolume(_volume);
-      await _flutterTts!.setPitch(_pitch);
-
-      // Check available engines
-      final engines = await _flutterTts!.getEngines;
-      if (engines != null && engines.isNotEmpty) {
-        _engine = engines.first['name'];
-        await _flutterTts!.setEngine(_engine);
-      }
-
-      _isTtsInitialized = true;
-      debugPrint('TTS initialized successfully');
-      return true;
     } catch (e) {
-      debugPrint('Error initializing TTS: $e');
-      return false;
+      _setState(VoiceServiceState.error);
+      _onError.add('Failed to initialize voice service: $e');
+      print('Error initializing voice service: $e');
     }
   }
 
-  // Initialize STT
-  Future<bool> initializeStt() async {
-    if (_isSttInitialized) return true;
+  /// Initialize Speech to Text
+  Future<void> _initializeSpeechToText() async {
+    final available = await _speechToText.initialize(
+      onStatus: _onSpeechStatus,
+      onError: _onSpeechError,
+    );
 
-    try {
-      _speechToText = SpeechToText();
-
-      // Request microphone permission
-      final permissionStatus = await Permission.microphone.request();
-      if (permissionStatus != PermissionStatus.granted) {
-        debugPrint('Microphone permission denied');
-        return false;
-      }
-
-      final available = await _speechToText!.initialize(
-        onError: (error) {
-          debugPrint('STT Error: ${error.errorMsg}');
-          _isListening = false;
-        },
-        onStatus: (status) {
-          debugPrint('STT Status: $status');
-          _isListening = status == 'listening';
-        },
-      );
-
-      if (available) {
-        _isSttInitialized = true;
-        debugPrint('STT initialized successfully');
-        return true;
-      } else {
-        debugPrint('STT not available on this device');
-        return false;
-      }
-    } catch (e) {
-      debugPrint('Error initializing STT: $e');
-      return false;
-    }
-  }
-
-  // Speak text
-  Future<bool> speak(String text) async {
-    if (!_isTtsInitialized) {
-      final initialized = await initializeTts();
-      if (!initialized) return false;
+    if (!available) {
+      throw Exception('Speech recognition not available');
     }
 
-    try {
-      if (_isSpeaking) {
-        await stop();
-      }
-
-      _lastSpokenText = text;
-      await _flutterTts!.speak(text);
-      return true;
-    } catch (e) {
-      debugPrint('Error speaking text: $e');
-      return false;
-    }
+    print('Speech to Text initialized');
   }
 
-  // Stop speaking
-  Future<bool> stop() async {
-    if (!_isTtsInitialized || _flutterTts == null) return false;
+  /// Initialize Text to Speech
+  Future<void> _initializeTextToSpeech() async {
+    // Configure TTS
+    await _flutterTts.setLanguage(_ttsLanguage);
+    await _flutterTts.setSpeechRate(_speechRate);
+    await _flutterTts.setPitch(_pitch);
+    await _flutterTts.setVolume(_volume);
 
-    try {
-      await _flutterTts!.stop();
-      _isSpeaking = false;
-      return true;
-    } catch (e) {
-      debugPrint('Error stopping TTS: $e');
-      return false;
-    }
+    // Set up callbacks
+    _flutterTts.setStartHandler(() {
+      _setState(VoiceServiceState.speaking);
+    });
+
+    _flutterTts.setCompletionHandler(() {
+      _setState(VoiceServiceState.idle);
+    });
+
+    _flutterTts.setErrorHandler((message) {
+      _setState(VoiceServiceState.error);
+      _onError.add('TTS Error: $message');
+    });
+
+    print('Text to Speech initialized');
   }
 
-  // Pause speaking
-  Future<bool> pause() async {
-    if (!_isTtsInitialized || _flutterTts == null) return false;
-
-    try {
-      await _flutterTts!.pause();
-      return true;
-    } catch (e) {
-      debugPrint('Error pausing TTS: $e');
-      return false;
-    }
-  }
-
-  // Start listening for speech
-  Future<bool> startListening({
-    required Function(String) onResult,
-    Function(String)? onPartialResult,
-    Function(String)? onError,
-    Duration? listenFor,
-  }) async {
-    if (!_isSttInitialized) {
-      final initialized = await initializeStt();
-      if (!initialized) return false;
-    }
-
-    if (_isListening) {
-      await stopListening();
-    }
-
-    try {
-      final locales = await _speechToText!.locales();
-      final locale = locales.firstWhere(
-            (l) => l.localeId.startsWith(_language.substring(0, 2)),
-        orElse: () => locales.first,
-      );
-
-      await _speechToText!.listen(
-        onResult: (result) {
-          final recognizedWords = result.recognizedWords;
-          if (result.finalResult) {
-            _lastRecognizedText = recognizedWords;
-            _isListening = false;
-            onResult(recognizedWords);
-          } else if (onPartialResult != null) {
-            onPartialResult(recognizedWords);
-          }
-        },
-        listenFor: listenFor ?? const Duration(seconds: 30),
-        pauseFor: const Duration(seconds: 3),
-        partialResults: onPartialResult != null,
-        onSoundLevelChange: (level) {
-          // Handle sound level changes if needed
-        },
-        cancelOnError: true,
-        listenMode: ListenMode.confirmation,
-        localeId: locale.localeId,
-      );
-
-      _isListening = true;
-      return true;
-    } catch (e) {
-      debugPrint('Error starting speech recognition: $e');
-      if (onError != null) {
-        onError('การรับรู้เสียงล้มเหลว: $e');
-      }
-      return false;
-    }
-  }
-
-  // Stop listening
-  Future<bool> stopListening() async {
-    if (!_isSttInitialized || _speechToText == null) return false;
-
-    try {
-      await _speechToText!.stop();
-      _isListening = false;
-      return true;
-    } catch (e) {
-      debugPrint('Error stopping speech recognition: $e');
-      return false;
-    }
-  }
-
-  // Cancel listening
-  Future<bool> cancelListening() async {
-    if (!_isSttInitialized || _speechToText == null) return false;
-
-    try {
-      await _speechToText!.cancel();
-      _isListening = false;
-      return true;
-    } catch (e) {
-      debugPrint('Error cancelling speech recognition: $e');
-      return false;
-    }
-  }
-
-  // Get available languages
-  Future<List<LocaleName>> getAvailableLanguages() async {
-    if (!_isSttInitialized) {
-      await initializeStt();
-    }
-
-    try {
-      if (_speechToText != null) {
-        return await _speechToText!.locales();
-      }
-      return [];
-    } catch (e) {
-      debugPrint('Error getting available languages: $e');
-      return [];
-    }
-  }
-
-  // Get available TTS voices
-  Future<List<Map<String, String>>> getAvailableVoices() async {
-    if (!_isTtsInitialized) {
-      await initializeTts();
-    }
-
-    try {
-      if (_flutterTts != null) {
-        final voices = await _flutterTts!.getVoices;
-        return List<Map<String, String>>.from(voices ?? []);
-      }
-      return [];
-    } catch (e) {
-      debugPrint('Error getting available voices: $e');
-      return [];
-    }
-  }
-
-  // Set TTS settings
-  Future<void> setSpeechRate(double rate) async {
-    _speechRate = rate.clamp(0.0, 1.0);
-    if (_isTtsInitialized && _flutterTts != null) {
-      await _flutterTts!.setSpeechRate(_speechRate);
-    }
-  }
-
-  Future<void> setVolume(double vol) async {
-    _volume = vol.clamp(0.0, 1.0);
-    if (_isTtsInitialized && _flutterTts != null) {
-      await _flutterTts!.setVolume(_volume);
-    }
-  }
-
-  Future<void> setPitch(double pitchValue) async {
-    _pitch = pitchValue.clamp(0.5, 2.0);
-    if (_isTtsInitialized && _flutterTts != null) {
-      await _flutterTts!.setPitch(_pitch);
-    }
-  }
-
-  Future<void> setLanguage(String lang) async {
-    _language = lang;
-    if (_isTtsInitialized && _flutterTts != null) {
-      await _flutterTts!.setLanguage(_language);
-    }
-  }
-
-  // Utility methods for Linux learning
-  Future<void> speakCommandExplanation(String command, String explanation) async {
-    final text = 'คำสั่ง $command: $explanation';
-    await speak(text);
-  }
-
-  Future<void> speakQuizQuestion(String question, List<String> options) async {
-    final optionsText = options.asMap().entries
-        .map((entry) => '${entry.key + 1}. ${entry.value}')
-        .join(', ');
-    final text = '$question ตัวเลือก: $optionsText';
-    await speak(text);
-  }
-
-  Future<void> speakAchievement(String achievementName) async {
-    final text = 'ยินดีด้วย! คุณได้รับความสำเร็จ: $achievementName';
-    await speak(text);
-  }
-
-  Future<void> speakWelcomeMessage() async {
-    const text = 'สวัสดีครับ ยินดีต้อนรับสู่ Linux Learning Chatbot คุณสามารถใช้เสียงในการสนทนากับผมได้';
-    await speak(text);
-  }
-
-  Future<void> speakErrorMessage(String error) async {
-    final text = 'เกิดข้อผิดพลาด: $error';
-    await speak(text);
-  }
-
-  // Check permissions
+  /// Check and request microphone permission
   Future<bool> checkMicrophonePermission() async {
     final status = await Permission.microphone.status;
-    return status == PermissionStatus.granted;
+
+    if (status.isGranted) {
+      return true;
+    } else if (status.isDenied) {
+      final result = await Permission.microphone.request();
+      return result.isGranted;
+    } else {
+      return false;
+    }
   }
 
-  Future<bool> requestMicrophonePermission() async {
-    final status = await Permission.microphone.request();
-    return status == PermissionStatus.granted;
+  /// Start listening for speech
+  Future<void> startListening({
+    VoiceRecognitionLanguage? language,
+    Duration? timeout,
+  }) async {
+    if (!_isInitialized) {
+      throw Exception('Voice service not initialized');
+    }
+
+    if (_state == VoiceServiceState.listening) {
+      return;
+    }
+
+    // Check microphone permission
+    final hasPermission = await checkMicrophonePermission();
+    if (!hasPermission) {
+      _onError.add('Microphone permission denied');
+      return;
+    }
+
+    // Set language if provided
+    if (language != null) {
+      await setRecognitionLanguage(language);
+    }
+
+    try {
+      _setState(VoiceServiceState.listening);
+
+      await _speechToText.listen(
+        onResult: _onSpeechResult,
+        localeId: _sttLanguage,
+        cancelOnError: false,
+        partialResults: true,
+        listenMode: stt.ListenMode.confirmation,
+        listenFor: timeout ?? const Duration(seconds: 30),
+      );
+
+    } catch (e) {
+      _setState(VoiceServiceState.error);
+      _onError.add('Failed to start listening: $e');
+    }
   }
 
-  // Cleanup resources
+  /// Stop listening
+  Future<void> stopListening() async {
+    if (_speechToText.isListening) {
+      await _speechToText.stop();
+    }
+    _setState(VoiceServiceState.idle);
+  }
+
+  /// Speak text
+  Future<void> speak(String text, {
+    String? language,
+    double? rate,
+    double? pitch,
+    double? volume,
+  }) async {
+    if (!_isInitialized) {
+      throw Exception('Voice service not initialized');
+    }
+
+    if (_state == VoiceServiceState.speaking) {
+      await _flutterTts.stop();
+    }
+
+    try {
+      // Set temporary parameters if provided
+      if (language != null) {
+        await _flutterTts.setLanguage(language);
+      }
+      if (rate != null) {
+        await _flutterTts.setSpeechRate(rate);
+      }
+      if (pitch != null) {
+        await _flutterTts.setPitch(pitch);
+      }
+      if (volume != null) {
+        await _flutterTts.setVolume(volume);
+      }
+
+      _setState(VoiceServiceState.speaking);
+      await _flutterTts.speak(text);
+
+      // Reset to default parameters
+      if (language != null) {
+        await _flutterTts.setLanguage(_ttsLanguage);
+      }
+      if (rate != null) {
+        await _flutterTts.setSpeechRate(_speechRate);
+      }
+      if (pitch != null) {
+        await _flutterTts.setPitch(_pitch);
+      }
+      if (volume != null) {
+        await _flutterTts.setVolume(_volume);
+      }
+
+    } catch (e) {
+      _setState(VoiceServiceState.error);
+      _onError.add('Failed to speak: $e');
+    }
+  }
+
+  /// Stop speaking
+  Future<void> stopSpeaking() async {
+    if (_state == VoiceServiceState.speaking) {
+      await _flutterTts.stop();
+      _setState(VoiceServiceState.idle);
+    }
+  }
+
+  /// Set recognition language
+  Future<void> setRecognitionLanguage(VoiceRecognitionLanguage language) async {
+    _currentLanguage = language;
+
+    switch (language) {
+      case VoiceRecognitionLanguage.thai:
+        _sttLanguage = 'th-TH';
+        break;
+      case VoiceRecognitionLanguage.english:
+        _sttLanguage = 'en-US';
+        break;
+    }
+
+    notifyListeners();
+  }
+
+  /// Set TTS language
+  Future<void> setTTSLanguage(String language) async {
+    _ttsLanguage = language;
+    if (_isInitialized) {
+      await _flutterTts.setLanguage(language);
+    }
+    notifyListeners();
+  }
+
+  /// Set speech rate (0.0 to 1.0)
+  Future<void> setSpeechRate(double rate) async {
+    _speechRate = rate.clamp(0.0, 1.0);
+    if (_isInitialized) {
+      await _flutterTts.setSpeechRate(_speechRate);
+    }
+    notifyListeners();
+  }
+
+  /// Set pitch (0.5 to 2.0)
+  Future<void> setPitch(double pitch) async {
+    _pitch = pitch.clamp(0.5, 2.0);
+    if (_isInitialized) {
+      await _flutterTts.setPitch(_pitch);
+    }
+    notifyListeners();
+  }
+
+  /// Set volume (0.0 to 1.0)
+  Future<void> setVolume(double volume) async {
+    _volume = volume.clamp(0.0, 1.0);
+    if (_isInitialized) {
+      await _flutterTts.setVolume(_volume);
+    }
+    notifyListeners();
+  }
+
+  /// Get available languages
+  Future<List<dynamic>> getAvailableLanguages() async {
+    if (!_isInitialized) return [];
+    return await _flutterTts.getLanguages;
+  }
+
+  /// Get available speech recognition locales
+  Future<List<stt.LocaleName>> getAvailableLocales() async {
+    if (!_isInitialized) return [];
+    return await _speechToText.locales();
+  }
+
+  /// Check if language is available for TTS
+  Future<bool> isLanguageAvailable(String language) async {
+    final languages = await getAvailableLanguages();
+    return languages.contains(language);
+  }
+
+  // Event handlers
+  void _onSpeechResult(stt.SpeechRecognitionResult result) {
+    _lastWords = result.recognizedWords;
+    _confidence = result.confidence;
+
+    if (result.finalResult) {
+      _setState(VoiceServiceState.processing);
+      _onSpeechResult.add(_lastWords);
+
+      // Auto return to idle after processing
+      Future.delayed(const Duration(milliseconds: 500), () {
+        if (_state == VoiceServiceState.processing) {
+          _setState(VoiceServiceState.idle);
+        }
+      });
+    }
+
+    notifyListeners();
+  }
+
+  void _onSpeechStatus(String status) {
+    print('Speech status: $status');
+
+    if (status == 'notListening' && _state == VoiceServiceState.listening) {
+      _setState(VoiceServiceState.idle);
+    }
+  }
+
+  void _onSpeechError(stt.SpeechRecognitionError error) {
+    _setState(VoiceServiceState.error);
+    _onError.add('Speech recognition error: ${error.errorMsg}');
+    print('Speech error: ${error.errorMsg}');
+  }
+
+  void _setState(VoiceServiceState newState) {
+    if (_state != newState) {
+      _state = newState;
+      _onStateChanged.add(newState);
+      notifyListeners();
+    }
+  }
+
+  /// Utility methods
+  String getStateDisplayText() {
+    switch (_state) {
+      case VoiceServiceState.idle:
+        return 'พร้อมใช้งาน';
+      case VoiceServiceState.listening:
+        return 'กำลังฟัง...';
+      case VoiceServiceState.processing:
+        return 'กำลังประมวลผล...';
+      case VoiceServiceState.speaking:
+        return 'กำลังพูด...';
+      case VoiceServiceState.error:
+        return 'เกิดข้อผิดพลาด';
+    }
+  }
+
+  String getLanguageDisplayText(VoiceRecognitionLanguage language) {
+    switch (language) {
+      case VoiceRecognitionLanguage.thai:
+        return 'ภาษาไทย';
+      case VoiceRecognitionLanguage.english:
+        return 'English';
+    }
+  }
+
+  /// Clean up resources
   void dispose() {
-    _flutterTts?.stop();
-    _speechToText?.stop();
-    _isTtsInitialized = false;
-    _isSttInitialized = false;
-    _isSpeaking = false;
-    _isListening = false;
+    _speechToText.stop();
+    _flutterTts.stop();
+    _onSpeechResult.close();
+    _onStateChanged.close();
+    _onError.close();
+    super.dispose();
   }
 
-  // Test TTS
-  Future<bool> testTts() async {
-    return await speak('ทดสอบการพูด Text-to-Speech');
+  @override
+  void notifyListeners() {
+    if (!kIsWeb && Platform.isAndroid || Platform.isIOS) {
+      super.notifyListeners();
+    }
   }
+}
 
-  // Test STT
-  Future<bool> testStt() async {
-    return await startListening(
-      onResult: (result) {
-        debugPrint('STT Test Result: $result');
-      },
-      onError: (error) {
-        debugPrint('STT Test Error: $error');
-      },
-      listenFor: const Duration(seconds: 5),
+// Voice command processor
+class VoiceCommandProcessor {
+  static final Map<String, List<String>> _commandPatterns = {
+    'navigation': [
+      'ไปที่',
+      'เปิด',
+      'แสดง',
+      'นำทาง',
+    ],
+    'commands': [
+      'คำสั่ง',
+      'รัน',
+      'เรียกใช้',
+      'ทำ',
+    ],
+    'help': [
+      'ช่วย',
+      'ความช่วยเหลือ',
+      'ไม่เข้าใจ',
+      'อธิบาย',
+    ],
+    'quiz': [
+      'แบบทดสอบ',
+      'ทดสอบ',
+      'สอบ',
+      'ควิซ',
+    ],
+  };
+
+  static VoiceCommandResult processCommand(String spokenText) {
+    final lowercaseText = spokenText.toLowerCase();
+
+    for (final category in _commandPatterns.entries) {
+      for (final pattern in category.value) {
+        if (lowercaseText.contains(pattern.toLowerCase())) {
+          return VoiceCommandResult(
+            category: category.key,
+            command: _extractCommand(spokenText, pattern),
+            confidence: 0.8,
+            originalText: spokenText,
+          );
+        }
+      }
+    }
+
+    return VoiceCommandResult(
+      category: 'unknown',
+      command: spokenText,
+      confidence: 0.3,
+      originalText: spokenText,
     );
   }
+
+  static String _extractCommand(String text, String pattern) {
+    final index = text.toLowerCase().indexOf(pattern.toLowerCase());
+    if (index != -1) {
+      return text.substring(index + pattern.length).trim();
+    }
+    return text;
+  }
+}
+
+class VoiceCommandResult {
+  final String category;
+  final String command;
+  final double confidence;
+  final String originalText;
+
+  const VoiceCommandResult({
+    required this.category,
+    required this.command,
+    required this.confidence,
+    required this.originalText,
+  });
+
+  bool get isHighConfidence => confidence >= 0.7;
+  bool get isNavigation => category == 'navigation';
+  bool get isCommand => category == 'commands';
+  bool get isHelp => category == 'help';
+  bool get isQuiz => category == 'quiz';
 }
