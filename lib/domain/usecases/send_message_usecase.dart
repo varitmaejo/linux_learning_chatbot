@@ -1,370 +1,246 @@
 import '../entities/message.dart';
 import '../repositories/chat_repository_interface.dart';
 
-class SendMessageUsecase {
+class SendMessageUseCase {
   final ChatRepositoryInterface _chatRepository;
 
-  SendMessageUsecase(this._chatRepository);
+  SendMessageUseCase(this._chatRepository);
 
+  /// Send a message and get response from the chatbot
   Future<SendMessageResult> execute({
-    required String text,
-    required String userId,
+    required String content,
     required String sessionId,
+    required String userId,
     MessageType type = MessageType.text,
-    Map<String, dynamic>? context,
+    List<String>? attachments,
+    Message? replyTo,
+    Map<String, dynamic>? metadata,
   }) async {
     try {
       // Validate input
-      if (text.trim().isEmpty) {
-        throw SendMessageException('ข้อความไม่สามารถเป็นค่าว่างได้');
-      }
-
-      if (userId.trim().isEmpty) {
-        throw SendMessageException('ไม่พบข้อมูลผู้ใช้');
-      }
-
-      if (sessionId.trim().isEmpty) {
-        throw SendMessageException('Session ID ไม่ถูกต้อง');
-      }
-
-      // Check message length
-      if (text.length > 500) {
-        throw SendMessageException('ข้อความยาวเกินไป (สูงสุด 500 ตัวอักษร)');
-      }
-
-      // Send message through repository
-      final responseMessage = await _chatRepository.sendMessage(
-        text: text,
-        userId: userId,
+      final validationResult = _validateInput(
+        content: content,
         sessionId: sessionId,
+        userId: userId,
         type: type,
-        context: _buildContext(context, type),
       );
 
-      // Determine response type
-      final responseType = _determineResponseType(responseMessage);
+      if (!validationResult.isValid) {
+        return SendMessageResult.failure(
+          error: validationResult.error!,
+          errorCode: 'VALIDATION_ERROR',
+        );
+      }
+
+      // Create user message
+      final userMessage = Message(
+        id: _generateMessageId(),
+        content: content,
+        type: type,
+        sender: MessageSender.user,
+        status: MessageStatus.sending,
+        timestamp: DateTime.now(),
+        userId: userId,
+        sessionId: sessionId,
+        metadata: metadata ?? {},
+        attachments: attachments ?? [],
+        replyTo: replyTo,
+        isEdited: false,
+      );
+
+      // Send message and get bot response
+      final botResponse = await _chatRepository.sendMessage(userMessage);
 
       return SendMessageResult.success(
-        message: responseMessage,
-        responseType: responseType,
-        metadata: {
-          'processingTime': DateTime.now().millisecondsSinceEpoch,
-          'messageType': type.toString(),
-          'hasQuickReplies': responseMessage.quickReplies?.isNotEmpty ?? false,
-          'hasCommandSuggestions': responseMessage.commandSuggestions?.isNotEmpty ?? false,
-        },
+        userMessage: userMessage.copyWith(status: MessageStatus.sent),
+        botResponse: botResponse,
       );
-
-    } on SendMessageException {
-      rethrow;
-    } catch (error) {
-      throw SendMessageException('เกิดข้อผิดพลาดในการส่งข้อความ: ${error.toString()}');
+    } catch (e) {
+      return SendMessageResult.failure(
+        error: e.toString(),
+        errorCode: 'SEND_MESSAGE_ERROR',
+      );
     }
   }
 
-  Future<SendMessageResult> executeCommand({
+  /// Send a voice message
+  Future<SendMessageResult> sendVoiceMessage({
+    required String audioPath,
+    required String sessionId,
+    required String userId,
+    Map<String, dynamic>? metadata,
+  }) async {
+    return execute(
+      content: audioPath,
+      sessionId: sessionId,
+      userId: userId,
+      type: MessageType.voice,
+      metadata: metadata,
+    );
+  }
+
+  /// Send a command message
+  Future<SendMessageResult> sendCommandMessage({
     required String command,
-    required String userId,
     required String sessionId,
-    Map<String, dynamic>? context,
-  }) async {
-    try {
-      // Validate command
-      if (command.trim().isEmpty) {
-        throw SendMessageException('คำสั่งไม่สามารถเป็นค่าว่างได้');
-      }
-
-      // Check if command is potentially dangerous
-      if (_isDangerousCommand(command)) {
-        return SendMessageResult.warning(
-          message: 'คำสั่ง "$command" อาจเป็นอันตราย กรุณาใช้ความระมัดระวัง',
-          originalCommand: command,
-        );
-      }
-
-      // Send command through repository
-      final responseMessage = await _chatRepository.sendCommand(
-        command: command,
-        userId: userId,
-        sessionId: sessionId,
-        context: context,
-      );
-
-      return SendMessageResult.success(
-        message: responseMessage,
-        responseType: ResponseType.commandExplanation,
-        metadata: {
-          'originalCommand': command,
-          'isCommandResponse': true,
-        },
-      );
-
-    } catch (error) {
-      throw SendMessageException('เกิดข้อผิดพลาดในการส่งคำสั่ง: ${error.toString()}');
-    }
-  }
-
-  Future<SendMessageResult> executeVoiceMessage({
-    required String transcribedText,
     required String userId,
-    required String sessionId,
-    required String audioUrl,
-    double? confidence,
+    Map<String, dynamic>? metadata,
   }) async {
-    try {
-      // Validate transcription
-      if (transcribedText.trim().isEmpty) {
-        throw SendMessageException('ไม่สามารถแปลงเสียงเป็นข้อความได้');
-      }
-
-      if (confidence != null && confidence < 0.7) {
-        return SendMessageResult.lowConfidence(
-          transcribedText: transcribedText,
-          confidence: confidence,
-        );
-      }
-
-      // Send voice message through repository
-      final responseMessage = await _chatRepository.sendVoiceMessage(
-        transcribedText: transcribedText,
-        userId: userId,
-        sessionId: sessionId,
-        audioUrl: audioUrl,
-        confidence: confidence,
-      );
-
-      return SendMessageResult.success(
-        message: responseMessage,
-        responseType: ResponseType.voiceResponse,
-        metadata: {
-          'originalAudioUrl': audioUrl,
-          'transcriptionConfidence': confidence,
-          'isVoiceResponse': true,
-        },
-      );
-
-    } catch (error) {
-      throw SendMessageException('เกิดข้อผิดพลาดในการประมวลผลเสียง: ${error.toString()}');
-    }
+    return execute(
+      content: command,
+      sessionId: sessionId,
+      userId: userId,
+      type: MessageType.command,
+      metadata: metadata,
+    );
   }
 
-  Future<SendMessageResult> startLearningSession({
+  /// Send message with attachments
+  Future<SendMessageResult> sendMessageWithAttachments({
+    required String content,
+    required String sessionId,
     required String userId,
-    required String sessionId,
-    required String skillLevel,
-    List<String>? interestedCategories,
+    required List<String> attachments,
+    Map<String, dynamic>? metadata,
   }) async {
-    try {
-      final responseMessage = await _chatRepository.startLearningSession(
-        userId: userId,
-        sessionId: sessionId,
-        skillLevel: skillLevel,
-        interestedCategories: interestedCategories,
-      );
-
-      return SendMessageResult.success(
-        message: responseMessage,
-        responseType: ResponseType.sessionStart,
-        metadata: {
-          'skillLevel': skillLevel,
-          'interestedCategories': interestedCategories,
-          'isSessionStart': true,
-        },
-      );
-
-    } catch (error) {
-      throw SendMessageException('เกิดข้อผิดพลาดในการเริ่มเซสชันการเรียน: ${error.toString()}');
-    }
+    return execute(
+      content: content,
+      sessionId: sessionId,
+      userId: userId,
+      attachments: attachments,
+      metadata: metadata,
+    );
   }
 
-  Future<SendMessageResult> askForHelp({
-    required String topic,
+  /// Reply to a message
+  Future<SendMessageResult> replyToMessage({
+    required String content,
+    required String sessionId,
     required String userId,
-    required String sessionId,
-    String? currentLevel,
+    required Message replyTo,
+    Map<String, dynamic>? metadata,
   }) async {
-    try {
-      if (topic.trim().isEmpty) {
-        throw SendMessageException('กรุณาระบุหัวข้อที่ต้องการความช่วยเหลือ');
-      }
+    return execute(
+      content: content,
+      sessionId: sessionId,
+      userId: userId,
+      replyTo: replyTo,
+      metadata: metadata,
+    );
+  }
 
-      final responseMessage = await _chatRepository.askForHelp(
-        topic: topic,
-        userId: userId,
-        sessionId: sessionId,
-        currentLevel: currentLevel,
+  ValidationResult _validateInput({
+    required String content,
+    required String sessionId,
+    required String userId,
+    required MessageType type,
+  }) {
+    if (content.isEmpty) {
+      return ValidationResult(
+        isValid: false,
+        error: 'Message content cannot be empty',
       );
+    }
 
-      return SendMessageResult.success(
-        message: responseMessage,
-        responseType: ResponseType.helpResponse,
-        metadata: {
-          'helpTopic': topic,
-          'currentLevel': currentLevel,
-          'isHelpResponse': true,
-        },
+    if (sessionId.isEmpty) {
+      return ValidationResult(
+        isValid: false,
+        error: 'Session ID cannot be empty',
       );
-
-    } catch (error) {
-      throw SendMessageException('เกิดข้อผิดพลาดในการขอความช่วยเหลือ: ${error.toString()}');
-    }
-  }
-
-  // Private helper methods
-  Map<String, dynamic> _buildContext(Map<String, dynamic>? userContext, MessageType type) {
-    final context = userContext ?? {};
-
-    context['messageType'] = type.toString();
-    context['timestamp'] = DateTime.now().toIso8601String();
-
-    // Add type-specific context
-    switch (type) {
-      case MessageType.command:
-        context['expectCommandResponse'] = true;
-        break;
-      case MessageType.voice:
-        context['isVoiceInput'] = true;
-        break;
-      default:
-        break;
     }
 
-    return context;
-  }
-
-  ResponseType _determineResponseType(Message message) {
-    final metadata = message.metadata ?? {};
-
-    if (metadata['commandExplanation'] == true) {
-      return ResponseType.commandExplanation;
-    } else if (metadata['voiceResponse'] == true) {
-      return ResponseType.voiceResponse;
-    } else if (metadata['helpResponse'] == true) {
-      return ResponseType.helpResponse;
-    } else if (message.quickReplies?.isNotEmpty ?? false) {
-      return ResponseType.interactive;
-    } else {
-      return ResponseType.standard;
+    if (userId.isEmpty) {
+      return ValidationResult(
+        isValid: false,
+        error: 'User ID cannot be empty',
+      );
     }
+
+    if (content.length > 10000) {
+      return ValidationResult(
+        isValid: false,
+        error: 'Message content is too long (max 10,000 characters)',
+      );
+    }
+
+    return ValidationResult(isValid: true);
   }
 
-  bool _isDangerousCommand(String command) {
-    final dangerousCommands = [
-      'rm -rf',
-      'dd if=',
-      'mkfs',
-      'fdisk',
-      'parted',
-      'format',
-      '> /dev/',
-      'shutdown',
-      'reboot',
-      'init 0',
-      'init 6',
-      'killall',
-      'pkill -9',
-    ];
+  String _generateMessageId() {
+    return 'msg_${DateTime.now().millisecondsSinceEpoch}_${_generateRandomString(8)}';
+  }
 
-    final lowercaseCommand = command.toLowerCase();
-    return dangerousCommands.any((dangerous) =>
-        lowercaseCommand.contains(dangerous.toLowerCase()));
+  String _generateRandomString(int length) {
+    const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+    return String.fromCharCodes(
+      Iterable.generate(
+        length,
+            (_) => chars.codeUnitAt(
+          (DateTime.now().millisecondsSinceEpoch * 997) % chars.length,
+        ),
+      ),
+    );
   }
 }
 
-// Result classes
 class SendMessageResult {
   final bool isSuccess;
-  final Message? message;
-  final ResponseType? responseType;
-  final String? errorMessage;
-  final String? warningMessage;
-  final Map<String, dynamic>? metadata;
+  final Message? userMessage;
+  final Message? botResponse;
+  final String? error;
+  final String? errorCode;
 
   const SendMessageResult._({
     required this.isSuccess,
-    this.message,
-    this.responseType,
-    this.errorMessage,
-    this.warningMessage,
-    this.metadata,
+    this.userMessage,
+    this.botResponse,
+    this.error,
+    this.errorCode,
   });
 
   factory SendMessageResult.success({
-    required Message message,
-    required ResponseType responseType,
-    Map<String, dynamic>? metadata,
+    required Message userMessage,
+    required Message botResponse,
   }) {
     return SendMessageResult._(
       isSuccess: true,
-      message: message,
-      responseType: responseType,
-      metadata: metadata,
+      userMessage: userMessage,
+      botResponse: botResponse,
     );
   }
 
-  factory SendMessageResult.warning({
-    required String message,
-    String? originalCommand,
-    Map<String, dynamic>? metadata,
+  factory SendMessageResult.failure({
+    required String error,
+    required String errorCode,
   }) {
     return SendMessageResult._(
       isSuccess: false,
-      warningMessage: message,
-      metadata: {
-        ...?metadata,
-        'originalCommand': originalCommand,
-        'isWarning': true,
-      },
+      error: error,
+      errorCode: errorCode,
     );
   }
-
-  factory SendMessageResult.lowConfidence({
-    required String transcribedText,
-    required double confidence,
-  }) {
-    return SendMessageResult._(
-      isSuccess: false,
-      warningMessage: 'ความมั่นใจในการแปลงเสียงต่ำ (${(confidence * 100).toInt()}%) กรุณาลองพูดใหม่',
-      metadata: {
-        'transcribedText': transcribedText,
-        'confidence': confidence,
-        'isLowConfidence': true,
-      },
-    );
-  }
-
-  factory SendMessageResult.error({
-    required String errorMessage,
-    Map<String, dynamic>? metadata,
-  }) {
-    return SendMessageResult._(
-      isSuccess: false,
-      errorMessage: errorMessage,
-      metadata: metadata,
-    );
-  }
-
-  bool get hasWarning => warningMessage != null;
-  bool get hasError => errorMessage != null;
-  bool get hasQuickReplies => message?.quickReplies?.isNotEmpty ?? false;
-  bool get hasCommandSuggestions => message?.commandSuggestions?.isNotEmpty ?? false;
-}
-
-enum ResponseType {
-  standard,
-  interactive,
-  commandExplanation,
-  voiceResponse,
-  helpResponse,
-  sessionStart,
-  error,
-}
-
-class SendMessageException implements Exception {
-  final String message;
-
-  const SendMessageException(this.message);
 
   @override
-  String toString() => 'SendMessageException: $message';
+  String toString() {
+    if (isSuccess) {
+      return 'SendMessageResult.success(userMessage: ${userMessage?.id}, botResponse: ${botResponse?.id})';
+    } else {
+      return 'SendMessageResult.failure(error: $error, errorCode: $errorCode)';
+    }
+  }
+}
+
+class ValidationResult {
+  final bool isValid;
+  final String? error;
+
+  const ValidationResult({
+    required this.isValid,
+    this.error,
+  });
+
+  @override
+  String toString() {
+    return 'ValidationResult(isValid: $isValid, error: $error)';
+  }
 }
